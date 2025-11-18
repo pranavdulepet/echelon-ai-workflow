@@ -1,6 +1,18 @@
 import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
+
+function buildApiUrl(path: string) {
+    if (!path.startsWith("/")) {
+        path = `/${path}`;
+    }
+    if (!API_BASE_URL) {
+        return path;
+    }
+    return `${API_BASE_URL}${path}`;
+}
+
 type Provider = "openai" | "anthropic";
 
 type HistoryItem = {
@@ -108,7 +120,7 @@ function App() {
         setIsLoading(true);
         setError(null);
         try {
-            const response = await fetch("/api/query", {
+            const response = await fetch(buildApiUrl("/api/query"), {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json"
@@ -393,7 +405,7 @@ function App() {
         setIsLoadingForms(true);
         setFormsError(null);
         try {
-            const response = await fetch("/api/forms");
+            const response = await fetch(buildApiUrl("/api/forms"));
             if (!response.ok) {
                 throw new Error("Unable to load forms.");
             }
@@ -414,7 +426,7 @@ function App() {
         setIsLoadingFormStructure(true);
         setFormStructureError(null);
         try {
-            const response = await fetch(`/api/forms/${encodeURIComponent(formId)}`);
+            const response = await fetch(buildApiUrl(`/api/forms/${encodeURIComponent(formId)}`));
             if (!response.ok) {
                 throw new Error("Unable to load form details.");
             }
@@ -507,7 +519,7 @@ function App() {
             setIsExplaining(true);
             setExplainError(null);
             try {
-                const response = await fetch("/api/explain", {
+                const response = await fetch(buildApiUrl("/api/explain"), {
                     method: "POST",
                     headers: {
                         "Content-Type": "application/json"
@@ -542,7 +554,7 @@ function App() {
             setExplainError(null);
             setExplanation("");
             try {
-                const response = await fetch("/api/explain/stream", {
+                const response = await fetch(buildApiUrl("/api/explain/stream"), {
                     method: "POST",
                     headers: {
                         "Content-Type": "application/json"
