@@ -99,6 +99,9 @@ function App() {
     const [explainError, setExplainError] = useState<string | null>(null);
     const [copySuccess, setCopySuccess] = useState(false);
     const [fullscreenJson, setFullscreenJson] = useState<string | null>(null);
+    const [isEditingJson, setIsEditingJson] = useState(false);
+    const [editedJson, setEditedJson] = useState<string>("");
+    const [jsonEditError, setJsonEditError] = useState<string | null>(null);
 
     const exampleQueries = [
         "update the dropdown options for the destination field in the travel request form: 1. add a paris option, 2. change tokyo to milan",
@@ -138,6 +141,9 @@ function App() {
             }
             const data: ApiResponse = await response.json();
             setResult(data);
+            setIsEditingJson(false);
+            setEditedJson("");
+            setJsonEditError(null);
             if (data.type === "clarification") {
                 setPendingClarification(data.question);
             } else {
@@ -205,6 +211,9 @@ function App() {
         setExplainError(null);
         setError(null);
         setSelectedDiffFormId(null);
+        setIsEditingJson(false);
+        setEditedJson("");
+        setJsonEditError(null);
     }
 
     function handleCopyJson() {
@@ -650,24 +659,109 @@ function App() {
         setFullscreenJson(null);
     }
 
-    function renderJson(value: unknown, label?: string, showExpand = true) {
+    function handleEditJson(value: unknown) {
+        const text = JSON.stringify(value, null, 2);
+        setEditedJson(text);
+        setIsEditingJson(true);
+        setJsonEditError(null);
+    }
+
+    function handleCancelEdit() {
+        setIsEditingJson(false);
+        setEditedJson("");
+        setJsonEditError(null);
+    }
+
+    function handleSaveJson() {
+        try {
+            const parsed = JSON.parse(editedJson);
+            if (result && result.type === "change_set") {
+                const updatedResult: ChangeSetResponse = {
+                    ...result,
+                    change_set: parsed as Record<string, unknown>
+                };
+                setResult(updatedResult);
+                setIsEditingJson(false);
+                setJsonEditError(null);
+                setEditedJson("");
+            }
+        } catch (err) {
+            const message = err instanceof Error ? err.message : "Invalid JSON";
+            setJsonEditError(message);
+        }
+    }
+
+    function renderJson(value: unknown, label?: string, showExpand = true, allowEdit = false) {
         if (!value) {
             return null;
         }
         const text = JSON.stringify(value, null, 2);
+        const isEditing = allowEdit && isEditingJson;
+
         return (
             <div className="json-container">
-                {showExpand && (
-                    <button
-                        type="button"
-                        className="json-expand-button"
-                        onClick={() => handleExpandJson(value, label || "JSON")}
-                        title="Expand to fullscreen"
-                    >
-                        ⛶
-                    </button>
+                <div className="json-header">
+                    {allowEdit && !isEditing && (
+                        <button
+                            type="button"
+                            className="json-edit-button"
+                            onClick={() => handleEditJson(value)}
+                            title="Edit JSON"
+                        >
+                            Edit
+                        </button>
+                    )}
+                    {allowEdit && isEditing && (
+                        <div className="json-edit-actions">
+                            <button
+                                type="button"
+                                className="json-save-button"
+                                onClick={handleSaveJson}
+                                title="Save changes"
+                            >
+                                Save
+                            </button>
+                            <button
+                                type="button"
+                                className="json-cancel-button"
+                                onClick={handleCancelEdit}
+                                title="Cancel editing"
+                            >
+                                ✕ Cancel
+                            </button>
+                        </div>
+                    )}
+                    {showExpand && !isEditing && (
+                        <button
+                            type="button"
+                            className="json-expand-button"
+                            onClick={() => handleExpandJson(value, label || "JSON")}
+                            title="Expand to fullscreen"
+                        >
+                            ⛶
+                        </button>
+                    )}
+                </div>
+                {isEditing ? (
+                    <div className="json-edit-container">
+                        <textarea
+                            className="json-edit-textarea"
+                            value={editedJson}
+                            onChange={(e) => {
+                                setEditedJson(e.target.value);
+                                setJsonEditError(null);
+                            }}
+                            spellCheck={false}
+                        />
+                        {jsonEditError && (
+                            <div className="json-edit-error">
+                                <strong>JSON Error:</strong> {jsonEditError}
+                            </div>
+                        )}
+                    </div>
+                ) : (
+                    <pre className="json-block">{text}</pre>
                 )}
-                <pre className="json-block">{text}</pre>
             </div>
         );
     }
@@ -1085,7 +1179,7 @@ function App() {
                                 </button>
                             </div>
                         </div>
-                        {renderJson(changeSetResult.change_set, "Change-set JSON")}
+                        {renderJson(changeSetResult.change_set, "Change-set JSON", true, true)}
                     </section>
                 )}
 
