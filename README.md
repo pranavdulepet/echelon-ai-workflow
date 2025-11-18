@@ -89,7 +89,7 @@ The frontend calls the backend at `/api/query` via a development proxy defined i
    - validates/repairs the plan using Pydantic
    - resolves forms, fields, option sets, and logic rules against SQLite
    - produces a JSON change-set keyed by table name with `insert`/`update`/`delete` arrays and a `before_snapshot` of affected forms
-4. The change-set or a clarifying question is returned to the frontend and rendered as formatted JSON and a side-by-side diff.
+4. The change-set or a clarifying question is returned to the frontend and rendered as formatted JSON and an enhanced visual preview showing before/after states with detailed change highlighting.
 
 ### Intermediate intent representation
 
@@ -131,6 +131,9 @@ The resolver converts the intent plan into concrete row changes:
 - Logic rules:
   - are inserted with generated placeholder IDs
   - include conditions and actions described in the intent payload
+  - field references in `lhs_ref` and `target_ref` are automatically resolved from `field_code` to `field_id`
+  - priority conflicts are automatically resolved by incrementing until a free slot is found
+  - update and delete operations are supported for existing rules
 
 The final change-set JSON follows the required format:
 
@@ -146,7 +149,12 @@ The final change-set JSON follows the required format:
 
 IDs for inserts use placeholder tokens such as `$fld_xxxxxx` that can be referenced by other rows in the same plan.
 
-In addition, the agent returns a `before_snapshot` structure for any affected forms so the UI can render side-by-side diffs.
+In addition, the agent returns a `before_snapshot` structure for any affected forms so the UI can render an enhanced visual preview showing:
+- Field additions, modifications, and deletions with before/after property changes
+- Option changes (additions, renames, removals) displayed as visual pills
+- Logic rules with readable condition and action descriptions
+- Change summary statistics (counts of new/modified items)
+- Field type badges and property indicators (read-only, hidden by default)
 
 ## Guardrails, idempotency, and ambiguity handling
 
@@ -158,17 +166,17 @@ In addition, the agent returns a `before_snapshot` structure for any affected fo
 
 ## Testing and evaluation
 
-There is a scenario harness and a small test suite under `backend/tests`:
+There is a scenario example set and a small test suite under `backend/tests`:
 
 - `backend/tests/scenarios.json` contains representative natural-language queries:
   - updating dropdown options on an existing form
   - adding conditional field requirements
   - creating a new form with specific fields
 - `backend/tests/run_scenarios.py` runs the agent against these queries and prints the resulting change-sets.
-- `backend/tests/test_resolver_examples.py` checks deterministic resolver behavior against the three canonical examples (options update, snack form, employment logic).
+- `backend/tests/test_resolver_examples.py` checks deterministic resolver behavior against the three standard examples (options update, snack form, employment logic).
 - `backend/tests/test_invariants.py` runs end-to-end queries through the full agent and asserts invariants on the resulting change-sets (shape, required fields present, update/delete IDs exist), using the cached schema.
 
-Run the harness and tests with:
+Run the tests with:
 
 ```bash
 cd echelon-ai-workflow/backend
@@ -189,14 +197,13 @@ In a production setting, you could extend this to compute exact- and partial-mat
 
 - The agent relies on LLM understanding of the domain; complex or very ambiguous requests may require multiple clarification questions.
 - Only a subset of possible operations is modeled in the current intent schema, though the core patterns are in place.
-- Existing logic rules are not deeply diffed or merged; logic intents primarily express new rules.
+- Logic rule updates support modifying properties and adding/updating conditions/actions, but complex rule merging (e.g., combining multiple rules) is not yet implemented.
 - There is no automatic execution of the generated change-sets against the database; applying them is left to downstream tooling.
 
 ## Next steps
 
-- Richer logic manipulation, including updating and disabling existing rules and conditions.
 - Stronger validation by simulating SQL constraints before returning a change-set.
-- Additional UI features such as diff views and one-click test runs for common scenarios.
+- One-click test runs for common scenarios directly from the UI.
 - More detailed evaluation metrics and automated regression tests comparing outputs against a curated corpus of expected JSON plans.
 
 ## Design and implementation decisions
@@ -206,7 +213,7 @@ In a production setting, you could extend this to compute exact- and partial-mat
     - `IntentPlan` (domain-level description of what to change).
     - Resolver (`resolver.py`) that maps the plan onto concrete table rows and IDs using SQLite.
     - UI that only ever sees the final JSON change-set and snapshots.
-  - This makes it easier to evolve the DB schema or the UI without having to retrain prompts.
+  - This makes it easier to evolve the DB schema or the UI without having to rewrite prompts.
 - **Intermediate intent model**:
   - The agent thinks in terms of forms, fields, options, and logic rules, not raw tables.
   - This reduces prompt complexity and allows the planning step to remain relatively stable even if the underlying DB schema is refactored or extended.
@@ -226,17 +233,23 @@ In a production setting, you could extend this to compute exact- and partial-mat
     3. Handling ambiguous requests that need clarification.
   - These examples teach the LLM the exact structure of `IntentPlan` objects and how to properly identify forms/fields.
 - **Explainability and UX**:
-  - The diff view and explanation mode are deliberately kept separate:
-    - Diff view is deterministic, driven by DB snapshots + change-set.
+  - The visual preview and explanation mode are deliberately kept separate:
+    - Visual preview is deterministic, driven by DB snapshots + change-set, showing exact field/option/logic changes with before/after states.
     - Explanations are LLM-generated text and treated as an aid, not a source of truth.
-  - This avoids coupling correctness to free-form text while still giving humans friendly summaries.
+  - The visual preview provides:
+    - Side-by-side before/after comparison of forms
+    - Visual highlighting of new, modified, and deleted items
+    - Detailed property change tracking (shows what changed and how)
+    - Logic rule visualization with readable condition/action descriptions
+    - Option change visualization with pills showing additions, renames, and removals
+  - This avoids coupling correctness to free-form text while still giving users easily followable summaries and clear visual feedback.
 
 ## Assumptions and constraints
 
 - The SQLite schema is the one shipped in `data/forms.sqlite` and does not change frequently.
 - The agent is expected to operate in an **admin tooling** context (not directly on end-user data), so:
   - Throughput requirements are moderate.
-  - Human oversight is expected before applying change-sets.
+  - User oversight is expected before applying change-sets.
 - API keys for OpenAI and/or Claude are available and the network environment allows outbound calls.
 - The number of forms and fields is large enough that you must **not** stream entire tables into the LLM, but not so large that a few targeted lookups per request become a bottleneck.
 - The agent only plans; actually executing the change-sets against the DB is intentionally left to other tooling to avoid accidental destructive changes.
@@ -357,8 +370,14 @@ In a production setting, you could extend this to compute exact- and partial-mat
      - `{"type": "change_set", "plan": ..., "change_set": ..., "before_snapshot": ...}`.
 9. **Frontend rendering**:
    - The Agent tab shows:
-     - The raw change-set JSON.
-     - A diff view where you can compare the current destinations with the planned modifications.
+     - The raw change-set JSON (with expand to fullscreen option).
+     - An **enhanced visual preview** with side-by-side before/after comparison showing:
+       - All fields with proper type rendering (text, dropdown, checkbox, date, etc.)
+       - Visual indicators for new/modified/deleted fields and options
+       - Property change details (e.g., "label: Old → New")
+       - Option changes displayed as colored pills (new options highlighted, renamed options show "was: old_value")
+       - Logic rules with human-readable conditions and actions
+       - Change summary badges showing counts of additions/modifications
      - An **Explain plan** button that calls `/api/explain/stream` to stream a friendly explanation.
 10. **Testing and validation**:
     - Resolver tests confirm that for this query, the change-set:
@@ -369,5 +388,3 @@ In a production setting, you could extend this to compute exact- and partial-mat
       - All required columns for inserts are present.
 
 This pattern generalizes to other scenarios (adding fields, creating new forms, adding conditional logic) with the same two-stage reasoning, DB-grounded resolution, diffing, and explanations. 
-
-
