@@ -1,7 +1,14 @@
 import asyncio
+import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
+
+here = Path(__file__).resolve()
+root = here.parent.parent
+if str(root) not in sys.path:
+  sys.path.insert(0, str(root))
 
 from app.db import Database
 from app.intent_schema import (
@@ -60,7 +67,7 @@ async def test_new_snack_form_creates_form_and_fields() -> None:
                 target_form=TargetForm(form_name="Snack Request"),
                 field_code="category",
                 field_label="Category",
-                field_type="select",
+                field_type="dropdown",
                 page_hint=None,
                 properties={"required": True},
             ),
@@ -69,7 +76,7 @@ async def test_new_snack_form_creates_form_and_fields() -> None:
                 target_form=TargetForm(form_name="Snack Request"),
                 field_code="item_name",
                 field_label="Item name",
-                field_type="text",
+                field_type="short_text",
                 page_hint=None,
                 properties={"required": True},
             ),
@@ -135,7 +142,7 @@ async def test_employment_university_logic_structure() -> None:
                 target_form=TargetForm(form_id=employment_form_id),
                 field_code="university_name",
                 field_label="University name",
-                field_type="text",
+                field_type="short_text",
                 page_hint=None,
                 properties={"required": False, "placeholder": "Your university"},
             )

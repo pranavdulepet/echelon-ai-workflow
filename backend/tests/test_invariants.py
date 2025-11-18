@@ -1,6 +1,13 @@
+import sys
+from pathlib import Path
 from typing import Any
 
 import pytest
+
+here = Path(__file__).resolve()
+root = here.parent.parent
+if str(root) not in sys.path:
+  sys.path.insert(0, str(root))
 
 from app.agent import FormAgent
 from app.db import Database, TableInfo

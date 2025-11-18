@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 
-const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
+const API_BASE_URL = ((import.meta as any).env?.VITE_API_BASE_URL ?? "").replace(/\/$/, "");
 
 function buildApiUrl(path: string) {
     if (!path.startsWith("/")) {
@@ -231,41 +231,71 @@ function App() {
         const form = snapshot.form;
         const fields = snapshot.fields || [];
         const optionsByField: Record<string, any[]> = snapshot.options_by_field || {};
+        const logicRules = snapshot.logic_rules || [];
+        const logicConditions = snapshot.logic_conditions || [];
+        const logicActions = snapshot.logic_actions || [];
 
-        // Apply changes if this is the "after" preview
-        let modifiedFields = [...fields];
-        let modifiedOptions = { ...optionsByField };
+        const optionSetToField: Record<string, string> = {};
+        for (const field of fields) {
+            const fieldOptions = optionsByField[field.id] || [];
+            if (fieldOptions.length > 0) {
+                const optionSetId = fieldOptions[0].option_set_id;
+                if (optionSetId) {
+                    optionSetToField[optionSetId] = field.id;
+                }
+            }
+        }
+
+        const originalFields = new Map(fields.map((f: any) => [f.id, { ...f }]));
+        const originalOptions = new Map<string, Map<string, any>>();
+        for (const fieldId in optionsByField) {
+            const opts = optionsByField[fieldId];
+            originalOptions.set(fieldId, new Map(opts.map((o: any) => [o.id, { ...o }])));
+        }
+
+        let modifiedFields = fields.map((f: any) => ({ ...f } as any));
+        let modifiedOptions: Record<string, any[]> = {};
+        for (const fieldId in optionsByField) {
+            modifiedOptions[fieldId] = optionsByField[fieldId].map((o: any) => ({ ...o }));
+        }
+        const modifiedLogicRules = [...logicRules];
 
         if (isAfter && changeSet) {
-            // Apply field changes
             if (changeSet.form_fields) {
-                // Handle inserts
                 if (changeSet.form_fields.insert) {
                     for (const field of changeSet.form_fields.insert) {
                         modifiedFields.push({
                             id: field.id,
                             code: field.code,
                             label: field.label,
-                            type_key: field.type_id ? `type_${field.type_id}` : 'unknown',
+                            field_type_key: field.field_type_key || 'unknown',
                             required: field.required || 0,
                             placeholder: field.placeholder || null,
-                            _isNew: true
+                            read_only: field.read_only || 0,
+                            visible_by_default: field.visible_by_default !== undefined ? field.visible_by_default : 1,
+                            _isNew: true,
+                            _originalState: null
                         });
                     }
                 }
-                // Handle updates
                 if (changeSet.form_fields.update) {
                     for (const update of changeSet.form_fields.update) {
-                        const idx = modifiedFields.findIndex(f => f.id === update.id);
+                        const idx = modifiedFields.findIndex((f: any) => f.id === update.id);
                         if (idx !== -1) {
-                            modifiedFields[idx] = { ...modifiedFields[idx], ...update, _isModified: true };
+                            const original = originalFields.get(update.id);
+                            modifiedFields[idx] = {
+                                ...modifiedFields[idx],
+                                ...update,
+                                _isModified: true,
+                                _originalState: original || null,
+                                _changes: Object.keys(update).filter(k => k !== 'id')
+                            };
                         }
                     }
                 }
-                // Handle deletes
                 if (changeSet.form_fields.delete) {
                     for (const del of changeSet.form_fields.delete) {
-                        const idx = modifiedFields.findIndex(f => f.id === del.id);
+                        const idx = modifiedFields.findIndex((f: any) => f.id === del.id);
                         if (idx !== -1) {
                             modifiedFields[idx] = { ...modifiedFields[idx], _isDeleted: true };
                         }
@@ -273,15 +303,10 @@ function App() {
                 }
             }
 
-            // Apply option changes
             if (changeSet.option_items) {
-                modifiedOptions = { ...modifiedOptions };
-                // Handle inserts
                 if (changeSet.option_items.insert) {
                     for (const opt of changeSet.option_items.insert) {
-                        const fieldId = fields.find((f: any) =>
-                            optionsByField[f.id]?.[0]?.option_set_id === opt.option_set_id
-                        )?.id;
+                        const fieldId = optionSetToField[opt.option_set_id];
                         if (fieldId) {
                             if (!modifiedOptions[fieldId]) {
                                 modifiedOptions[fieldId] = [];
@@ -290,82 +315,328 @@ function App() {
                         }
                     }
                 }
-                // Handle updates
                 if (changeSet.option_items.update) {
                     for (const update of changeSet.option_items.update) {
                         for (const fieldId in modifiedOptions) {
                             const idx = modifiedOptions[fieldId].findIndex(o => o.id === update.id);
                             if (idx !== -1) {
+                                const original = originalOptions.get(fieldId)?.get(update.id);
                                 modifiedOptions[fieldId][idx] = {
                                     ...modifiedOptions[fieldId][idx],
                                     ...update,
-                                    _isModified: true
+                                    _isModified: true,
+                                    _originalState: original || null
+                                };
+                            }
+                        }
+                    }
+                }
+                if (changeSet.option_items.delete) {
+                    for (const del of changeSet.option_items.delete) {
+                        for (const fieldId in modifiedOptions) {
+                            const idx = modifiedOptions[fieldId].findIndex(o => o.id === del.id);
+                            if (idx !== -1) {
+                                modifiedOptions[fieldId][idx] = {
+                                    ...modifiedOptions[fieldId][idx],
+                                    is_active: 0,
+                                    _isDeleted: true
                                 };
                             }
                         }
                     }
                 }
             }
+
+            if (changeSet.logic_rules) {
+                if (changeSet.logic_rules.insert) {
+                    for (const rule of changeSet.logic_rules.insert) {
+                        modifiedLogicRules.push({ ...rule, _isNew: true });
+                    }
+                }
+                if (changeSet.logic_rules.update) {
+                    for (const update of changeSet.logic_rules.update) {
+                        const idx = modifiedLogicRules.findIndex(r => r.id === update.id);
+                        if (idx !== -1) {
+                            modifiedLogicRules[idx] = { ...modifiedLogicRules[idx], ...update, _isModified: true };
+                        }
+                    }
+                }
+                if (changeSet.logic_rules.delete) {
+                    for (const del of changeSet.logic_rules.delete) {
+                        const idx = modifiedLogicRules.findIndex(r => r.id === del.id);
+                        if (idx !== -1) {
+                            modifiedLogicRules[idx] = { ...modifiedLogicRules[idx], _isDeleted: true };
+                        }
+                    }
+                }
+            }
         }
+
+        const getFieldTypeDisplay = (field: any) => {
+            const typeKey = field.field_type_key || '';
+            const typeMap: Record<string, string> = {
+                'short_text': 'Text',
+                'long_text': 'Textarea',
+                'dropdown': 'Dropdown',
+                'radio': 'Radio',
+                'checkbox': 'Checkbox',
+                'date': 'Date',
+                'number': 'Number',
+                'email': 'Email',
+                'file_upload': 'File Upload',
+                'tags': 'Tags'
+            };
+            return typeMap[typeKey] || typeKey || 'Unknown';
+        };
+
+        const renderFieldInput = (field: any, options: any[]) => {
+            const typeKey = field.field_type_key || '';
+
+            if (typeKey.includes('text') || typeKey === 'email' || typeKey === 'number') {
+                return (
+                    <input
+                        type={typeKey === 'email' ? 'email' : typeKey === 'number' ? 'number' : 'text'}
+                        className="field-preview-input"
+                        placeholder={field.placeholder || `Enter ${field.label.toLowerCase()}`}
+                        disabled
+                    />
+                );
+            }
+
+            if (typeKey === 'long_text') {
+                return (
+                    <textarea
+                        className="field-preview-textarea"
+                        placeholder={field.placeholder || `Enter ${field.label.toLowerCase()}`}
+                        disabled
+                        rows={3}
+                    />
+                );
+            }
+
+            if (typeKey === 'dropdown' || typeKey === 'radio' || typeKey === 'select') {
+                const activeOptions = options.filter(o => o.is_active !== 0 && !o._isDeleted);
+                return (
+                    <select className="field-preview-select" disabled>
+                        <option>Select an option</option>
+                        {activeOptions.map(opt => {
+                            const optClasses = [
+                                opt._isNew && 'option-new',
+                                opt._isModified && 'option-modified',
+                            ].filter(Boolean).join(' ');
+                            return (
+                                <option key={opt.id} className={optClasses}>
+                                    {opt.label || opt.value}
+                                    {opt._isNew && ' ✨ NEW'}
+                                    {opt._isModified && opt._originalState && ` (was: ${opt._originalState.label || opt._originalState.value})`}
+                                </option>
+                            );
+                        })}
+                    </select>
+                );
+            }
+
+            if (typeKey === 'checkbox') {
+                return (
+                    <label className="field-preview-checkbox">
+                        <input type="checkbox" disabled />
+                        <span>Check this option</span>
+                    </label>
+                );
+            }
+
+            if (typeKey === 'date') {
+                return (
+                    <input
+                        type="date"
+                        className="field-preview-input"
+                        disabled
+                    />
+                );
+            }
+
+            return (
+                <div className="field-preview-placeholder">
+                    {getFieldTypeDisplay(field)} field
+                </div>
+            );
+        };
+
+        const formLogicRules = modifiedLogicRules.filter((r: any) =>
+            !r._isDeleted && (r.form_id === form.id || r.form_id?.startsWith('$'))
+        );
 
         return (
             <div className="form-preview">
                 <div className="form-preview-header">
-                    <div className="form-preview-title">{form.title}</div>
-                    <div className="form-preview-meta">{form.slug}</div>
+                    <div>
+                        <div className="form-preview-title">{form.title}</div>
+                        <div className="form-preview-meta">{form.slug}</div>
+                    </div>
+                    {isAfter && changeSet && (
+                        <div className="form-preview-stats">
+                            {changeSet.form_fields?.insert?.length > 0 && (
+                                <span className="stat-badge stat-new">+{changeSet.form_fields.insert.length} field{changeSet.form_fields.insert.length !== 1 ? 's' : ''}</span>
+                            )}
+                            {changeSet.form_fields?.update?.length > 0 && (
+                                <span className="stat-badge stat-modified">~{changeSet.form_fields.update.length} modified</span>
+                            )}
+                            {changeSet.option_items?.insert?.length > 0 && (
+                                <span className="stat-badge stat-new">+{changeSet.option_items.insert.length} option{changeSet.option_items.insert.length !== 1 ? 's' : ''}</span>
+                            )}
+                            {changeSet.logic_rules?.insert?.length > 0 && (
+                                <span className="stat-badge stat-new">+{changeSet.logic_rules.insert.length} rule{changeSet.logic_rules.insert.length !== 1 ? 's' : ''}</span>
+                            )}
+                        </div>
+                    )}
                 </div>
                 <div className="form-preview-fields">
-                    {modifiedFields.filter(f => !f._isDeleted).map((field, idx) => {
+                    {modifiedFields.map((field: any, idx: number) => {
+                        if (field._isDeleted && !isAfter) return null;
+
                         const options = modifiedOptions[field.id] || [];
                         const fieldClasses = [
                             'form-preview-field',
                             field._isNew && 'field-new',
                             field._isModified && 'field-modified',
+                            field._isDeleted && 'field-deleted',
                         ].filter(Boolean).join(' ');
+
+                        const original = field._originalState;
+                        const changes = field._changes || [];
 
                         return (
                             <div key={field.id || idx} className={fieldClasses}>
                                 <div className="field-preview-header">
-                                    <label className="field-preview-label">
-                                        {field.label}
-                                        {field.required === 1 && <span className="field-required">*</span>}
-                                    </label>
-                                    {field._isNew && <span className="field-badge badge-new">NEW</span>}
-                                    {field._isModified && <span className="field-badge badge-modified">MODIFIED</span>}
+                                    <div className="field-preview-label-group">
+                                        <label className="field-preview-label">
+                                            {field.label}
+                                            {field.required === 1 && <span className="field-required">*</span>}
+                                        </label>
+                                        <div className="field-preview-meta-group">
+                                            <span className="field-type-badge">{getFieldTypeDisplay(field)}</span>
+                                            {field.code && <span className="field-preview-code">{field.code}</span>}
+                                        </div>
+                                    </div>
+                                    <div className="field-badges">
+                                        {field._isNew && <span className="field-badge badge-new">NEW</span>}
+                                        {field._isModified && <span className="field-badge badge-modified">MODIFIED</span>}
+                                        {field._isDeleted && <span className="field-badge badge-deleted">DELETED</span>}
+                                    </div>
                                 </div>
-                                {field.type_key && field.type_key.includes('text') && (
-                                    <input
-                                        type="text"
-                                        className="field-preview-input"
-                                        placeholder={field.placeholder || `Enter ${field.label.toLowerCase()}`}
-                                        disabled
-                                    />
-                                )}
-                                {field.type_key && (field.type_key.includes('dropdown') || field.type_key.includes('select')) && (
-                                    <select className="field-preview-select" disabled>
-                                        <option>Select an option</option>
-                                        {options.filter(o => o.is_active !== 0).map(opt => {
-                                            const optClasses = [
-                                                opt._isNew && 'option-new',
-                                                opt._isModified && 'option-modified',
-                                            ].filter(Boolean).join(' ');
+
+                                {field._isModified && original && changes.length > 0 && (
+                                    <div className="field-changes-list">
+                                        {changes.map((change: string) => {
+                                            const oldVal = original[change];
+                                            const newVal = field[change];
+                                            if (oldVal === newVal) return null;
                                             return (
-                                                <option key={opt.id} className={optClasses}>
-                                                    {opt.label}
-                                                    {opt._isNew && ' (NEW)'}
-                                                    {opt._isModified && ' (MODIFIED)'}
-                                                </option>
+                                                <div key={change} className="field-change-item">
+                                                    <span className="change-label">{change}:</span>
+                                                    <span className="change-old">{String(oldVal)}</span>
+                                                    <span className="change-arrow">→</span>
+                                                    <span className="change-new">{String(newVal)}</span>
+                                                </div>
                                             );
                                         })}
-                                    </select>
+                                    </div>
                                 )}
-                                {field.code && (
-                                    <div className="field-preview-code">{field.code}</div>
+
+                                {!field._isDeleted && renderFieldInput(field, options)}
+
+                                {options.length > 0 && !field._isDeleted && (
+                                    <div className="field-options-preview">
+                                        <div className="options-label">Options:</div>
+                                        <div className="options-list">
+                                            {options.filter(o => o.is_active !== 0 && !o._isDeleted).map(opt => (
+                                                <span key={opt.id} className={`option-pill ${opt._isNew ? 'option-new' : ''} ${opt._isModified ? 'option-modified' : ''}`}>
+                                                    {opt.label || opt.value}
+                                                    {opt._isNew && ' ✨'}
+                                                    {opt._isModified && opt._originalState && ` (was: ${opt._originalState.label || opt._originalState.value})`}
+                                                </span>
+                                            ))}
+                                            {options.some(o => o._isDeleted || o.is_active === 0) && (
+                                                <span className="option-pill option-deleted">
+                                                    {options.filter(o => o._isDeleted || o.is_active === 0).length} removed
+                                                </span>
+                                            )}
+                                        </div>
+                                    </div>
+                                )}
+
+                                {field.read_only === 1 && (
+                                    <div className="field-property-badge">Read-only</div>
+                                )}
+                                {field.visible_by_default === 0 && (
+                                    <div className="field-property-badge">Hidden by default</div>
                                 )}
                             </div>
                         );
                     })}
                 </div>
+
+                {formLogicRules.length > 0 && (
+                    <div className="form-preview-logic">
+                        <div className="logic-section-header">
+                            <h4 className="logic-section-title">Logic Rules</h4>
+                        </div>
+                        {formLogicRules.map((rule: any) => {
+                            const ruleConditions = logicConditions.filter((c: any) => c.rule_id === rule.id);
+                            const ruleActions = logicActions.filter((a: any) => a.rule_id === rule.id);
+
+                            return (
+                                <div key={rule.id} className={`logic-rule-card ${rule._isNew ? 'logic-new' : ''} ${rule._isModified ? 'logic-modified' : ''}`}>
+                                    <div className="logic-rule-header">
+                                        <span className="logic-rule-name">{rule.name}</span>
+                                        {rule._isNew && <span className="field-badge badge-new">NEW</span>}
+                                        {rule._isModified && <span className="field-badge badge-modified">MODIFIED</span>}
+                                    </div>
+                                    {ruleConditions.length > 0 && (
+                                        <div className="logic-conditions">
+                                            <strong>When:</strong> {ruleConditions.map((c: any, i: number) => {
+                                                try {
+                                                    const lhsRef = typeof c.lhs_ref === 'string' ? JSON.parse(c.lhs_ref) : c.lhs_ref;
+                                                    const fieldId = lhsRef?.field_id;
+                                                    const field = modifiedFields.find((f: any) => f.id === fieldId);
+                                                    const fieldLabel = field?.label || fieldId || 'field';
+                                                    return (
+                                                        <span key={i}>
+                                                            {i > 0 && ` ${c.bool_join || 'AND'} `}
+                                                            {fieldLabel} {c.operator} {c.rhs?.replace(/"/g, '')}
+                                                        </span>
+                                                    );
+                                                } catch {
+                                                    return <span key={i}>{c.lhs_ref} {c.operator} {c.rhs}</span>;
+                                                }
+                                            })}
+                                        </div>
+                                    )}
+                                    {ruleActions.length > 0 && (
+                                        <div className="logic-actions">
+                                            <strong>Then:</strong> {ruleActions.map((a: any, i: number) => {
+                                                try {
+                                                    const targetRef = typeof a.target_ref === 'string' ? JSON.parse(a.target_ref) : a.target_ref;
+                                                    const fieldId = targetRef?.field_id;
+                                                    const field = modifiedFields.find((f: any) => f.id === fieldId || (f.id?.startsWith('$') && fieldId?.startsWith('$')));
+                                                    const fieldLabel = field?.label || fieldId || 'field';
+                                                    return (
+                                                        <span key={i}>
+                                                            {i > 0 && ', '}
+                                                            {a.action} {fieldLabel}
+                                                        </span>
+                                                    );
+                                                } catch {
+                                                    return <span key={i}>{a.action} {a.target_ref}</span>;
+                                                }
+                                            })}
+                                        </div>
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                )}
             </div>
         );
     }
@@ -1040,7 +1311,7 @@ function App() {
                             className="provider-input"
                         >
                             <option value="openai">OpenAI</option>
-                            <option value="anthropic">Claude</option>
+
                         </select>
                     </div>
                 </header>

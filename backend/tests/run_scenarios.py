@@ -1,6 +1,12 @@
 import asyncio
 import json
+import sys
 from pathlib import Path
+
+here = Path(__file__).resolve()
+root = here.parent.parent
+if str(root) not in sys.path:
+  sys.path.insert(0, str(root))
 
 from app.agent import FormAgent
 from app.db import Database
@@ -8,8 +14,7 @@ from app.llm_client import LlmClient
 
 
 async def run() -> None:
-  here = Path(__file__).resolve().parent
-  scenarios_path = here / "scenarios.json"
+  scenarios_path = here.parent / "scenarios.json"
   data = json.loads(scenarios_path.read_text(encoding="utf-8"))
 
   db = Database()

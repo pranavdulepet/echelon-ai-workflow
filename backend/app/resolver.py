@@ -4,12 +4,13 @@ Resolver that converts an intent plan into a concrete JSON change-set.
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from uuid import uuid4
 
 from .config import get_settings
 from .db import Database
-from .intent_schema import IntentPlan, OptionIntent, FieldIntent, LogicIntent, OperationType
+from .intent_schema import IntentPlan, OptionIntent, FieldIntent, LogicIntent, OperationType, TargetForm
 
 
 class ResolutionClarificationNeeded(ValueError):
@@ -102,6 +103,7 @@ async def _create_new_forms(
             "id": page_id,
             "form_id": form_id,
             "page_number": 1,
+            "position": 1,
             "title": "Page 1",
         })
         
@@ -289,6 +291,7 @@ async def _apply_field_intents(
                 "form_id": form_id,
                 "page_id": target_page["id"],
                 "type_id": field_type["id"],
+                "field_type_key": field_type["key"],  
                 "code": code,
                 "label": label,
                 "help_text": intent.properties.get("help_text") if intent.properties else None,
@@ -435,6 +438,108 @@ async def _apply_option_intents(
                 )
 
 
+async def _resolve_field_reference(
+    ref_json_str: str | None,
+    form_id: str,
+    db: Database,
+    change_set: dict[str, Any],
+) -> str | None:
+    if not ref_json_str:
+        return None
+    
+    try:
+        ref_obj = json.loads(ref_json_str)
+    except (json.JSONDecodeError, TypeError):
+        return ref_json_str
+    
+    if not isinstance(ref_obj, dict):
+        return ref_json_str
+    
+    if ref_obj.get("type") != "field":
+        return ref_json_str
+    
+    if "field_id" in ref_obj:
+        field_id = ref_obj["field_id"]
+        if field_id.startswith("$"):
+            fields_in_changeset = change_set.get("form_fields", {}).get("insert", [])
+            matching_field = next(
+                (f for f in fields_in_changeset if f.get("id") == field_id),
+                None
+            )
+            
+            if not matching_field:
+                
+                placeholder_parts = field_id.split("_", 1)
+                if len(placeholder_parts) == 2 and placeholder_parts[0] == "$fld":
+                    potential_code = placeholder_parts[1]
+                   
+                    if len(potential_code) > 8 or not all(c in '0123456789abcdef' for c in potential_code.lower()):
+                        matching_field = next(
+                            (f for f in fields_in_changeset
+                             if f.get("form_id") == form_id and f.get("code") == potential_code),
+                            None
+                        )
+            
+            if not matching_field and "field_code" in ref_obj:
+                field_code = ref_obj["field_code"]
+                matching_field = next(
+                    (f for f in fields_in_changeset
+                     if f.get("form_id") == form_id and f.get("code") == field_code),
+                    None
+                )
+            
+            if not matching_field:
+                raise ValueError(
+                    f"Logic rule references field placeholder {field_id} that doesn't exist in change-set"
+                )
+            ref_obj["field_id"] = matching_field["id"]
+            return json.dumps(ref_obj)
+        return ref_json_str
+    
+    field_code = ref_obj.get("field_code")
+    if not field_code:
+        return ref_json_str
+    
+    fields_in_changeset = change_set.get("form_fields", {}).get("insert", [])
+    matching_field = None
+    
+    if form_id.startswith("$"):
+        matching_field = next(
+            (f for f in fields_in_changeset
+             if f.get("form_id") == form_id and f.get("code") == field_code),
+            None
+        )
+    else:
+        matching_field = next(
+            (f for f in fields_in_changeset
+             if f.get("form_id") == form_id and f.get("code") == field_code),
+            None
+        )
+        
+        if not matching_field:
+            field_intent = FieldIntent(
+                operation=OperationType.update,
+                target_form=TargetForm(form_id=form_id),
+                field_code=field_code,
+                field_label=None,
+                field_type=None,
+                page_hint=None,
+                properties={},
+            )
+            matching_field = await _resolve_field(db, form_id, field_intent, change_set)
+    
+    if not matching_field:
+        raise ValueError(
+            f"Logic rule references field '{field_code}' that doesn't exist on form {form_id}"
+        )
+    
+    ref_obj["field_id"] = matching_field["id"]
+    if "field_code" in ref_obj:
+        del ref_obj["field_code"]
+    
+    return json.dumps(ref_obj)
+
+
 async def _apply_logic_intents(
     intents: list[LogicIntent], db: Database, change_set: dict[str, Any], new_form_ids: dict[str, str]
 ) -> None:
@@ -445,6 +550,17 @@ async def _apply_logic_intents(
         actions_table = _ensure_table_section(change_set, "logic_actions")
 
         if intent.operation is OperationType.insert:
+            requested_priority = intent.payload.get("priority", 100)
+            existing_rules = await db.get_logic_rules_for_form(form_id)
+            existing_priorities = {r["priority"] for r in existing_rules}
+            
+            rules_in_changeset = change_set.get("logic_rules", {}).get("insert", [])
+            existing_priorities.update(r["priority"] for r in rules_in_changeset if r.get("form_id") == form_id)
+            
+            final_priority = requested_priority
+            while final_priority in existing_priorities:
+                final_priority += 1
+            
             rule_id = _placeholder("rule")
             rule = {
                 "id": rule_id,
@@ -452,18 +568,21 @@ async def _apply_logic_intents(
                 "name": intent.description,
                 "trigger": intent.payload.get("trigger", "on_change"),
                 "scope": intent.payload.get("scope", "form"),
-                "priority": intent.payload.get("priority", 100),
+                "priority": final_priority,
                 "enabled": 1,
             }
             rules_table["insert"].append(rule)
 
             for cond in intent.payload.get("conditions", []):
+                lhs_ref = cond.get("lhs_ref")
+                resolved_lhs_ref = await _resolve_field_reference(lhs_ref, form_id, db, change_set)
+                
                 conditions_table["insert"].append(
                     {
                         "id": _placeholder("cond"),
                         "rule_id": rule_id,
                         "group_id": None,
-                        "lhs_ref": cond.get("lhs_ref"),
+                        "lhs_ref": resolved_lhs_ref,
                         "operator": cond.get("operator", "="),
                         "rhs": cond.get("rhs"),
                         "bool_join": cond.get("bool_join", "AND"),
@@ -472,15 +591,169 @@ async def _apply_logic_intents(
                 )
 
             for act in intent.payload.get("actions", []):
+                target_ref = act.get("target_ref")
+                resolved_target_ref = await _resolve_field_reference(target_ref, form_id, db, change_set)
+                
                 actions_table["insert"].append(
                     {
                         "id": _placeholder("act"),
                         "rule_id": rule_id,
                         "action": act.get("action"),
-                        "target_ref": act.get("target_ref"),
+                        "target_ref": resolved_target_ref,
                         "params": act.get("params"),
                         "position": act.get("position"),
                     }
                 )
+        
+        elif intent.operation is OperationType.update:
+            rule_identifier = intent.payload.get("rule_id") or intent.description
+            existing_rules = await db.get_logic_rules_for_form(form_id)
+            
+            matching_rule = None
+            if rule_identifier and not rule_identifier.startswith("$"):
+                matching_rule = next(
+                    (r for r in existing_rules if r["id"] == rule_identifier),
+                    None
+                )
+            
+            if not matching_rule and intent.description:
+                matching_rule = next(
+                    (r for r in existing_rules if r["name"] == intent.description),
+                    None
+                )
+            
+            if not matching_rule:
+                raise ValueError(
+                    f"Could not find existing logic rule to update: {rule_identifier or intent.description}"
+                )
+            
+            rule_id = matching_rule["id"]
+            
+            update_rule = {"id": rule_id}
+            if "trigger" in intent.payload:
+                update_rule["trigger"] = intent.payload["trigger"]
+            if "scope" in intent.payload:
+                update_rule["scope"] = intent.payload["scope"]
+            if "priority" in intent.payload:
+                update_rule["priority"] = intent.payload["priority"]
+            if "enabled" in intent.payload:
+                update_rule["enabled"] = 1 if intent.payload["enabled"] else 0
+            if intent.description:
+                update_rule["name"] = intent.description
+            
+            if len(update_rule) > 1:
+                rules_table["update"].append(update_rule)
+            
+            if "conditions" in intent.payload:
+                existing_conditions = await db.fetch_all(
+                    "SELECT * FROM logic_conditions WHERE rule_id = ?",
+                    [rule_id]
+                )
+                existing_condition_ids = {c["id"] for c in existing_conditions}
+                
+                for cond in intent.payload["conditions"]:
+                    cond_id = cond.get("id")
+                    if cond_id and cond_id in existing_condition_ids:
+                        update_cond = {"id": cond_id}
+                        if "lhs_ref" in cond:
+                            resolved = await _resolve_field_reference(cond["lhs_ref"], form_id, db, change_set)
+                            update_cond["lhs_ref"] = resolved
+                        if "operator" in cond:
+                            update_cond["operator"] = cond["operator"]
+                        if "rhs" in cond:
+                            update_cond["rhs"] = cond["rhs"]
+                        if "bool_join" in cond:
+                            update_cond["bool_join"] = cond["bool_join"]
+                        if "position" in cond:
+                            update_cond["position"] = cond["position"]
+                        conditions_table["update"].append(update_cond)
+                    else:
+                        resolved_lhs_ref = await _resolve_field_reference(
+                            cond.get("lhs_ref"), form_id, db, change_set
+                        )
+                        conditions_table["insert"].append({
+                            "id": _placeholder("cond"),
+                            "rule_id": rule_id,
+                            "group_id": None,
+                            "lhs_ref": resolved_lhs_ref,
+                            "operator": cond.get("operator", "="),
+                            "rhs": cond.get("rhs"),
+                            "bool_join": cond.get("bool_join", "AND"),
+                            "position": cond.get("position"),
+                        })
+            
+            if "actions" in intent.payload:
+                existing_actions = await db.fetch_all(
+                    "SELECT * FROM logic_actions WHERE rule_id = ?",
+                    [rule_id]
+                )
+                existing_action_ids = {a["id"] for a in existing_actions}
+                
+                for act in intent.payload["actions"]:
+                    act_id = act.get("id")
+                    if act_id and act_id in existing_action_ids:
+                        update_act = {"id": act_id}
+                        if "action" in act:
+                            update_act["action"] = act["action"]
+                        if "target_ref" in act:
+                            resolved = await _resolve_field_reference(act["target_ref"], form_id, db, change_set)
+                            update_act["target_ref"] = resolved
+                        if "params" in act:
+                            update_act["params"] = act["params"]
+                        if "position" in act:
+                            update_act["position"] = act["position"]
+                        actions_table["update"].append(update_act)
+                    else:
+                        resolved_target_ref = await _resolve_field_reference(
+                            act.get("target_ref"), form_id, db, change_set
+                        )
+                        actions_table["insert"].append({
+                            "id": _placeholder("act"),
+                            "rule_id": rule_id,
+                            "action": act.get("action"),
+                            "target_ref": resolved_target_ref,
+                            "params": act.get("params"),
+                            "position": act.get("position"),
+                        })
+        
+        elif intent.operation is OperationType.delete:
+            rule_identifier = intent.payload.get("rule_id") or intent.description
+            existing_rules = await db.get_logic_rules_for_form(form_id)
+            
+            matching_rule = None
+            if rule_identifier and not rule_identifier.startswith("$"):
+                matching_rule = next(
+                    (r for r in existing_rules if r["id"] == rule_identifier),
+                    None
+                )
+            
+            if not matching_rule and intent.description:
+                matching_rule = next(
+                    (r for r in existing_rules if r["name"] == intent.description),
+                    None
+                )
+            
+            if not matching_rule:
+                raise ValueError(
+                    f"Could not find existing logic rule to delete: {rule_identifier or intent.description}"
+                )
+            
+            rule_id = matching_rule["id"]
+            
+            rules_table["delete"].append({"id": rule_id})
+            
+            existing_conditions = await db.fetch_all(
+                "SELECT id FROM logic_conditions WHERE rule_id = ?",
+                [rule_id]
+            )
+            for cond in existing_conditions:
+                conditions_table["delete"].append({"id": cond["id"]})
+            
+            existing_actions = await db.fetch_all(
+                "SELECT id FROM logic_actions WHERE rule_id = ?",
+                [rule_id]
+            )
+            for act in existing_actions:
+                actions_table["delete"].append({"id": act["id"]})
 
 
