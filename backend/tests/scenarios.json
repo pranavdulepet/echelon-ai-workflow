@@ -1,0 +1,17 @@
+[
+    {
+        "name": "Update travel destination options",
+        "query": "update the dropdown options for the destination field in the travel request form: 1. add a paris option, 2. change tokyo to milan",
+        "provider": "openai"
+    },
+    {
+        "name": "Employment student university rule",
+        "query": "I want the employment-demo form to require university_name when employment_status is \"Student\". University name should be a text field.",
+        "provider": "openai"
+    },
+    {
+        "name": "New snack request form",
+        "query": "I want to create a new form to allow employees to request a new snack. There should be a category field (ice cream/ beverage/ fruit/ chips/ gum), and name of the item (text).",
+        "provider": "openai"
+    }
+]
