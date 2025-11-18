@@ -128,9 +128,10 @@ async def _resolve_form_id(
             "SELECT id, slug, title FROM forms ORDER BY title"
         )
         if all_forms:
+            form_list = ", ".join([f"{row['title']} ({row['slug']})" for row in all_forms])
             message = (
                 f"I could not find any form matching '{name_or_code}'. "
-                "Please choose one of the known forms."
+                f"Please choose one of the available forms: {form_list}"
             )
             candidates = [
                 {"id": row["id"], "title": row["title"], "slug": row["slug"]}
@@ -148,9 +149,10 @@ async def _resolve_form_id(
             form_candidates=candidates,
         )
     if len(matches) > 1:
+        form_list = ", ".join([f"{row['title']} ({row['slug']})" for row in matches])
         message = (
             f"Multiple forms match '{name_or_code}'. "
-            "Please choose the correct form."
+            f"Please choose the correct form: {form_list}"
         )
         candidates = [
             {"id": row["id"], "title": row["title"], "slug": row["slug"]}
@@ -209,9 +211,10 @@ async def _resolve_field(
         if len(fuzzy_candidates) == 1:
             return fuzzy_candidates[0]
         if len(fuzzy_candidates) > 1:
+            field_list = ", ".join([f"{c['label']} ({c['code']})" for c in fuzzy_candidates])
             message = (
                 f"Multiple fields match code '{intent.field_code}' on this form. "
-                "Please choose the correct field."
+                f"Please choose the correct field: {field_list}"
             )
             field_candidates = [
                 {"id": c["id"], "label": c["label"], "code": c["code"]}
@@ -228,9 +231,10 @@ async def _resolve_field(
         if len(candidates) == 1:
             return candidates[0]
         if len(candidates) > 1:
+            field_list = ", ".join([f"{c['label']} ({c['code']})" for c in candidates])
             message = (
                 f"Multiple fields match '{intent.field_label}' on this form. "
-                "Please choose the correct field."
+                f"Please choose the correct field: {field_list}"
             )
             field_candidates = [
                 {"id": c["id"], "label": c["label"], "code": c["code"]}

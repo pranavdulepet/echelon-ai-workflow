@@ -85,7 +85,15 @@ class FormAgent:
                 if q or a:
                     pieces.append(f"Q: {q}\nA: {a}")
             if pieces:
-                history_block = "Previous clarifications:\n" + "\n".join(pieces) + "\n\n"
+                history_block = (
+                    "IMPORTANT: Previous clarification questions and answers:\n"
+                    + "\n".join(pieces)
+                    + "\n\n"
+                    + "You MUST use the answers above to fill in missing information. "
+                    + "If a previous question asked about a form or field, and the user provided an answer, "
+                    + "use that answer in your plan. Only ask a NEW clarification question if information is STILL missing "
+                    + "after considering all previous answers.\n\n"
+                )
 
         intent_schema_description = """
 The JSON object must match this schema:
@@ -199,7 +207,7 @@ Examples:
      "logic_blocks": [],
      "notes": "User did not specify which form",
      "needs_clarification": true,
-     "clarification_question": "Which form would you like to add the description field to?"
+     "clarification_question": "Which form would you like to add the description field to? Available forms: Travel Request (travel-complex), Employment Demo (employment-demo), Snack Request (snack-request)"
    }
 
 4. User: "I want to create a new form to allow employees to request a new snack. There should be a category field (ice cream/ beverage/ fruit/ chips/ gum), and name of the item (text)."
@@ -241,7 +249,7 @@ Key guidelines:
 - For option intents: provide both field_code and field_label from the schema if available
 - If user says "destination field" and schema shows "destinations", use "destinations"
 - When updating options, operation should be "insert" (we add/rename within that operation)
-- Only set needs_clarification=true if you genuinely cannot determine user intent
+- Only set needs_clarification=true if you genuinely cannot determine user intent AFTER considering all previous clarification answers
 - When creating new forms, include ALL fields and options in one plan
 - Be specific with form identification: use form_name or form_code, preferably both
 - For field_type, use ONLY these values: "short_text", "long_text", "dropdown", "radio", "checkbox", "tags", "date", "number", "file_upload", "email"
@@ -250,12 +258,29 @@ Key guidelines:
 - Use field_code (not field_id) in lhs_ref and target_ref - IDs will be resolved later
 - Conditions: lhs_ref and rhs are JSON strings, operator is "=" or "!=" or "contains", etc.
 - Actions: action is "show", "hide", "require", "optional", etc. (not "show_field" or "require_field")
+
+Clarification question guidelines:
+- Make questions SPECIFIC and PERSONALIZED to the user's request
+- Include relevant context: list available forms/fields when asking which one to use
+- Reference what the user originally asked for in your question
+- Example: Instead of "Which form?", ask "Which form would you like to add the description field to? Available forms: Travel Request (travel-complex), Employment Demo (employment-demo)"
+- Example: Instead of "Which field?", ask "Which field should be updated? The form has these fields: Destinations (destinations), Start Date (start_date), End Date (end_date)"
+- If previous clarification answers provide the needed information, DO NOT ask again - use that information instead
 """
 
         system_prompt = (
             "You are an assistant that plans edits to a form management database.\n"
             "You never write SQL or concrete IDs. You only produce a structured intent plan.\n"
-            "When information is missing or ambiguous, you set needs_clarification=true and ask exactly one short question.\n"
+            "\n"
+            "CRITICAL: Before asking a clarification question:\n"
+            "1. Check if previous clarification answers already provide the missing information\n"
+            "2. If yes, use that information and proceed with the plan\n"
+            "3. If no, ask ONE specific, personalized question with context\n"
+            "4. Include available options (forms/fields) in your question when relevant\n"
+            "5. Reference the user's original request in your question\n"
+            "\n"
+            "When information is missing or ambiguous AFTER considering all previous answers, "
+            "you set needs_clarification=true and ask exactly one specific question with context.\n"
             "Never guess form names or fields if multiple matches are possible.\n"
             "Always respond with a single JSON object only, no extra text.\n"
             "\n"
@@ -285,22 +310,43 @@ Key guidelines:
             plan = IntentPlan.model_validate(repaired)
         return plan
 
-    async def critique_intent_plan(self, query: str, plan: IntentPlan) -> IntentPlan:
+    async def critique_intent_plan(self, query: str, plan: IntentPlan, history: list[dict[str, str]] | None = None) -> IntentPlan:
         skeleton = plan.model_copy(deep=True)
         skeleton.notes = None
         skeleton.needs_clarification = False
         skeleton.clarification_question = None
 
+        history_block = ""
+        if history:
+            pieces = []
+            for item in history[-5:]:
+                q = item.get("question", "").strip()
+                a = item.get("answer", "").strip()
+                if q or a:
+                    pieces.append(f"Q: {q}\nA: {a}")
+            if pieces:
+                history_block = (
+                    "Previous clarification questions and answers:\n"
+                    + "\n".join(pieces)
+                    + "\n\n"
+                    + "IMPORTANT: If the plan sets needs_clarification=true but a previous answer already provides "
+                    + "the missing information, you should set needs_clarification=false and incorporate that answer into the plan.\n\n"
+                )
+
         system_prompt = (
             "You are reviewing a planned set of edits to a form management database.\n"
             "Ensure the plan matches the user's request and looks internally consistent.\n"
+            "Check if previous clarification answers resolve any ambiguities in the plan.\n"
+            "If the plan asks for clarification but previous answers already provide the needed information, "
+            "update the plan to use that information and set needs_clarification=false.\n"
             "If it is acceptable, return the same JSON. If you see clear issues, return a corrected JSON plan.\n"
             "Do not add deletes unless clearly requested.\n"
             "Always respond with a single JSON object matching the intent plan schema, and nothing else.\n"
         )
 
         user_prompt = (
-            "User request:\n"
+            history_block
+            + "User request:\n"
             f"{query.strip()}\n\n"
             "Planned intent JSON (to review):\n"
             f"{skeleton.model_dump_json(indent=2)}\n\n"
@@ -334,7 +380,7 @@ Key guidelines:
 
     async def plan_and_resolve(self, query: str, history: list[dict[str, str]] | None = None) -> dict[str, Any]:
         plan = await self.plan_from_query(query=query, history=history)
-        plan = await self.critique_intent_plan(query=query, plan=plan)
+        plan = await self.critique_intent_plan(query=query, plan=plan, history=history)
         if plan.needs_clarification:
             question = (
                 plan.clarification_question
