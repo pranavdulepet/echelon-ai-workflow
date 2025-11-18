@@ -1,6 +1,6 @@
 FROM python:3.11-slim
 
-WORKDIR ./
+WORKDIR ./backend
 
 # Install dependencies
 COPY requirements.txt .
