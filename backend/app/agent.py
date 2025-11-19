@@ -405,6 +405,9 @@ Clarification question guidelines:
         return repaired
 
     async def plan_and_resolve(self, query: str, history: list[dict[str, str]] | None = None) -> dict[str, Any]:
+        from .change_set_validator import validate_change_set
+        from .exceptions import ChangeSetValidationError, ChangeSetStructureError
+        
         plan = await self.plan_from_query(query=query, history=history)
         plan = await self.critique_intent_plan(query=query, plan=plan, history=history)
         if plan.needs_clarification:
@@ -420,6 +423,7 @@ Clarification question guidelines:
 
         try:
             change_set = await build_change_set(plan=plan, db=self.db)
+            await validate_change_set(change_set, self.db)
         except ResolutionClarificationNeeded as exc:
             payload: dict[str, Any] = {
                 "type": "clarification",
@@ -433,6 +437,12 @@ Clarification question guidelines:
             if getattr(exc, "field_candidates", None):
                 payload["field_candidates"] = exc.field_candidates
             return payload
+        except (ChangeSetValidationError, ChangeSetStructureError) as exc:
+            return {
+                "type": "clarification",
+                "question": f"I encountered an issue with the planned changes: {str(exc)}. Could you please restate your request?",
+                "plan": plan.model_dump(),
+            }
 
         form_ids: set[str] = set()
         option_set_ids: set[str] = set()

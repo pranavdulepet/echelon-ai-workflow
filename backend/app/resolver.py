@@ -38,6 +38,8 @@ def _ensure_table_section(container: dict[str, Any], table: str) -> dict[str, li
 
 
 async def build_change_set(plan: IntentPlan, db: Database) -> dict[str, Any]:
+    from .change_set_validator import validate_change_set_structure
+    
     settings = get_settings()
     change_set: dict[str, Any] = {}
     
@@ -54,6 +56,8 @@ async def build_change_set(plan: IntentPlan, db: Database) -> dict[str, Any]:
             total_rows += len(table[op])
     if total_rows > settings.max_changed_rows:
         raise ValueError(f"Planned {total_rows} row changes which exceeds limit {settings.max_changed_rows}")
+
+    await validate_change_set_structure(change_set)
 
     return change_set
 

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 import json
@@ -16,6 +16,13 @@ from .api_models import (
 from .config import Settings, get_settings
 from .llm_client import LlmClient
 from .db import Database
+from .request_context import set_request_id, get_request_id
+from .exceptions import (
+    ChangeSetValidationError,
+    ChangeSetStructureError,
+    DatabaseOperationError,
+    LLMOperationError,
+)
 
 
 def create_app() -> FastAPI:
@@ -34,8 +41,17 @@ def create_app() -> FastAPI:
     llm = LlmClient()
     agent = FormAgent(db=db, llm=llm)
 
+    @app.middleware("http")
+    async def add_request_id(request: Request, call_next):
+        """Add request ID to context for all requests."""
+        request_id = set_request_id()
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
+
     @app.post("/api/query", response_model=ChangeSetResponse | ClarificationResponse)
-    async def handle_query(body: QueryRequest):
+    async def handle_query(body: QueryRequest, request: Request):
+        request_id = get_request_id()
         settings.llm_provider = body.provider or settings.llm_provider
         try:
             result = await agent.plan_and_resolve(
@@ -43,10 +59,30 @@ def create_app() -> FastAPI:
                 history=[item.model_dump() for item in body.history],
             )
         except ValueError as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
-        except Exception as exc:  # noqa: BLE001
+            error_msg = str(exc)
+            if request_id:
+                error_msg = f"[Request ID: {request_id}] {error_msg}"
+            raise HTTPException(status_code=400, detail=error_msg) from exc
+        except (ChangeSetValidationError, ChangeSetStructureError) as exc:
+            error_msg = f"Change-set validation failed: {str(exc)}"
+            if request_id:
+                error_msg = f"[Request ID: {request_id}] {error_msg}"
+            raise HTTPException(status_code=422, detail=error_msg) from exc
+        except DatabaseOperationError as exc:
+            error_msg = f"Database operation failed: {str(exc)}"
+            if request_id:
+                error_msg = f"[Request ID: {request_id}] {error_msg}"
+            raise HTTPException(status_code=503, detail=error_msg) from exc
+        except LLMOperationError as exc:
+            error_msg = f"LLM operation failed: {str(exc)}"
+            if request_id:
+                error_msg = f"[Request ID: {request_id}] {error_msg}"
+            raise HTTPException(status_code=502, detail=error_msg) from exc
+        except Exception as exc:  
             import traceback
             error_details = f"Failed to plan changes: {type(exc).__name__}: {str(exc)}"
+            if request_id:
+                error_details = f"[Request ID: {request_id}] {error_details}"
             print(f"Error in handle_query: {error_details}")
             traceback.print_exc()
             raise HTTPException(status_code=502, detail=error_details) from exc
@@ -86,7 +122,8 @@ def create_app() -> FastAPI:
         return {"status": "ok"}
 
     @app.post("/api/explain", response_model=ExplainResponse)
-    async def explain(body: ExplainRequest):
+    async def explain(body: ExplainRequest, request: Request):
+        request_id = get_request_id()
         settings.llm_provider = body.provider or settings.llm_provider
         try:
             explanation = agent.explain_change_set(
@@ -94,9 +131,16 @@ def create_app() -> FastAPI:
                 plan=body.plan,
                 change_set=body.change_set,
             )
-        except Exception as exc:  # noqa: BLE001
-            message = "Failed to generate explanation."
-            raise HTTPException(status_code=502, detail=message) from exc
+        except LLMOperationError as exc:
+            error_msg = f"LLM operation failed: {str(exc)}"
+            if request_id:
+                error_msg = f"[Request ID: {request_id}] {error_msg}"
+            raise HTTPException(status_code=502, detail=error_msg) from exc
+        except Exception as exc:  
+            error_msg = "Failed to generate explanation."
+            if request_id:
+                error_msg = f"[Request ID: {request_id}] {error_msg}"
+            raise HTTPException(status_code=502, detail=error_msg) from exc
         return ExplainResponse(explanation=explanation)
 
     @app.post("/api/explain/stream")

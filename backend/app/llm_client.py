@@ -12,6 +12,7 @@ from anthropic import Anthropic
 from openai import OpenAI
 
 from .config import get_settings
+from .exceptions import LLMOperationError
 
 
 class LlmMessage(TypedDict):
@@ -106,10 +107,8 @@ class LlmClient:
             content = response.choices[0].message.content or "{}"
             return json.loads(content)
         except Exception as e:
-            print(f"OpenAI API error: {type(e).__name__}: {e}")
-            print(f"System prompt length: {len(system_prompt)}")
-            print(f"User prompt length: {len(user_prompt)}")
-            raise
+            error_msg = f"OpenAI API error: {type(e).__name__}: {e}"
+            raise LLMOperationError(error_msg) from e
 
     def _generate_json_anthropic(
         self,
@@ -138,10 +137,8 @@ class LlmClient:
             text = result.content[0].text
             return json.loads(text)
         except Exception as e:
-            print(f"Anthropic API error: {type(e).__name__}: {e}")
-            print(f"System prompt length: {len(system_prompt)}")
-            print(f"User prompt length: {len(user_prompt)}")
-            raise
+            error_msg = f"Anthropic API error: {type(e).__name__}: {e}"
+            raise LLMOperationError(error_msg) from e
 
     def _generate_text_openai(
         self,
@@ -151,12 +148,16 @@ class LlmClient:
     ) -> str:
         client = self._ensure_openai()
         messages = self._build_messages(system_prompt, user_prompt, extra_messages)
-        response = client.chat.completions.create(
-            model=self.settings.openai_model,
-            messages=[{"role": m["role"], "content": m["content"]} for m in messages],
-        )
-        content = response.choices[0].message.content or ""
-        return content
+        try:
+            response = client.chat.completions.create(
+                model=self.settings.openai_model,
+                messages=[{"role": m["role"], "content": m["content"]} for m in messages],
+            )
+            content = response.choices[0].message.content or ""
+            return content
+        except Exception as e:
+            error_msg = f"OpenAI API error: {type(e).__name__}: {e}"
+            raise LLMOperationError(error_msg) from e
 
     async def _stream_text_openai(
         self,
@@ -200,7 +201,8 @@ class LlmClient:
             if chunk and not chunk.startswith("ERROR:"):
                 yield chunk
             elif chunk and chunk.startswith("ERROR:"):
-                raise RuntimeError(chunk[7:])
+                error_msg = f"OpenAI streaming error: {chunk[7:]}"
+                raise LLMOperationError(error_msg)
 
     def _generate_text_anthropic(
         self,
@@ -219,12 +221,16 @@ class LlmClient:
                 user_messages.append(
                     {"role": message["role"], "content": message["content"]}
                 )
-        result = client.messages.create(
-            model=self.settings.anthropic_model,
-            system=system_message,
-            max_tokens=1024,
-            messages=user_messages,
-        )
-        return result.content[0].text
+        try:
+            result = client.messages.create(
+                model=self.settings.anthropic_model,
+                system=system_message,
+                max_tokens=1024,
+                messages=user_messages,
+            )
+            return result.content[0].text
+        except Exception as e:
+            error_msg = f"Anthropic API error: {type(e).__name__}: {e}"
+            raise LLMOperationError(error_msg) from e
 
 
