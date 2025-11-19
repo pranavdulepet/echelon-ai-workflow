@@ -11,7 +11,6 @@ from pydantic_settings import BaseSettings
 
 def _get_default_db_path() -> Path:
     """Get default database path relative to project root."""
-    # Try to find project root (3 levels up from this file: backend/app/config.py)
     config_file = Path(__file__)
     project_root = config_file.parent.parent.parent
     return project_root / "data" / "forms.sqlite"

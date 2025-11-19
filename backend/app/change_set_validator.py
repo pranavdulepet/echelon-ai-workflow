@@ -18,11 +18,9 @@ async def validate_change_set_structure(change_set: dict[str, Any]) -> None:
     """
     errors: list[str] = []
     
-    # Collect all placeholder IDs that are created
     created_ids: set[str] = set()
     referenced_ids: set[str] = set()
     
-    # Track form IDs
     form_ids: set[str] = set()
     page_ids: set[str] = set()
     field_ids: set[str] = set()
@@ -30,7 +28,6 @@ async def validate_change_set_structure(change_set: dict[str, Any]) -> None:
     option_item_ids: set[str] = set()
     rule_ids: set[str] = set()
     
-    # First pass: collect all created IDs
     for table_name, operations in change_set.items():
         if not isinstance(operations, dict):
             continue
@@ -43,7 +40,6 @@ async def validate_change_set_structure(change_set: dict[str, Any]) -> None:
                 if not isinstance(row, dict):
                     continue
                     
-                # Collect IDs
                 if "id" in row:
                     row_id = row["id"]
                     if isinstance(row_id, str):
@@ -52,7 +48,6 @@ async def validate_change_set_structure(change_set: dict[str, Any]) -> None:
                         elif op_type in ("update", "delete"):
                             referenced_ids.add(row_id)
                         
-                        # Track by type
                         if table_name == "forms":
                             form_ids.add(row_id)
                         elif table_name == "form_pages":
@@ -66,7 +61,6 @@ async def validate_change_set_structure(change_set: dict[str, Any]) -> None:
                         elif table_name == "logic_rules":
                             rule_ids.add(row_id)
     
-    # Second pass: validate references
     for table_name, operations in change_set.items():
         if not isinstance(operations, dict):
             continue
@@ -79,7 +73,6 @@ async def validate_change_set_structure(change_set: dict[str, Any]) -> None:
                 if not isinstance(row, dict):
                     continue
                 
-                # Validate form_id references
                 if "form_id" in row:
                     form_id = row["form_id"]
                     if isinstance(form_id, str):
@@ -89,7 +82,6 @@ async def validate_change_set_structure(change_set: dict[str, Any]) -> None:
                                     f"{table_name}.{op_type}: references non-existent form placeholder {form_id}"
                                 )
                 
-                # Validate page_id references
                 if "page_id" in row:
                     page_id = row["page_id"]
                     if isinstance(page_id, str):
@@ -99,7 +91,6 @@ async def validate_change_set_structure(change_set: dict[str, Any]) -> None:
                                     f"{table_name}.{op_type}: references non-existent page placeholder {page_id}"
                                 )
                 
-                # Validate field_id references
                 if "field_id" in row:
                     field_id = row["field_id"]
                     if isinstance(field_id, str):
@@ -109,7 +100,6 @@ async def validate_change_set_structure(change_set: dict[str, Any]) -> None:
                                     f"{table_name}.{op_type}: references non-existent field placeholder {field_id}"
                                 )
                 
-                # Validate option_set_id references
                 if "option_set_id" in row:
                     option_set_id = row["option_set_id"]
                     if isinstance(option_set_id, str):
@@ -119,7 +109,6 @@ async def validate_change_set_structure(change_set: dict[str, Any]) -> None:
                                     f"{table_name}.{op_type}: references non-existent option_set placeholder {option_set_id}"
                                 )
                 
-                # Validate rule_id references (for logic_conditions and logic_actions)
                 if "rule_id" in row:
                     rule_id = row["rule_id"]
                     if isinstance(rule_id, str):
@@ -144,25 +133,20 @@ async def validate_change_set(change_set: dict[str, Any], db: Database) -> None:
     errors: list[str] = []
     schema_state = await get_schema_state(db)
     
-    # Build a map of table name to TableInfo
     tables_by_name = {table.name: table for table in schema_state.tables}
     
-    # Collect all IDs that will exist after inserts
     existing_ids: dict[str, set[str]] = {}
     
-    # First, get existing IDs from database for tables we're modifying
     for table_name in change_set.keys():
         if table_name not in tables_by_name:
             continue
         
-        # Check if table has an 'id' column
         table_info = tables_by_name[table_name]
         has_id_column = any(col.name == "id" for col in table_info.columns)
         if not has_id_column:
             existing_ids[table_name] = set()
             continue
         
-        # Get existing IDs for this table
         table_ids: set[str] = set()
         try:
             rows = await db.fetch_all(f"SELECT id FROM {table_name}")
@@ -171,13 +155,10 @@ async def validate_change_set(change_set: dict[str, Any], db: Database) -> None:
                     table_ids.add(str(row["id"]))
             existing_ids[table_name] = table_ids
         except Exception:
-            # Table might not exist or query failed, skip
             existing_ids[table_name] = set()
     
-    # Track IDs that will be created
     created_ids: dict[str, set[str]] = {table: set() for table in change_set.keys()}
     
-    # Validate inserts first
     for table_name, operations in change_set.items():
         if table_name not in tables_by_name:
             continue
@@ -194,18 +175,15 @@ async def validate_change_set(change_set: dict[str, Any], db: Database) -> None:
                 if not isinstance(row, dict):
                     continue
                 
-                # Check required fields
                 for col_name in required_columns:
                     if col_name not in row or row[col_name] is None:
                         errors.append(
                             f"{table_name}.insert[{idx}]: missing required field '{col_name}'"
                         )
                 
-                # Track created IDs
                 if "id" in row and isinstance(row["id"], str):
                     created_ids[table_name].add(row["id"])
     
-    # Validate updates and deletes reference existing records
     for table_name, operations in change_set.items():
         if table_name not in tables_by_name:
             continue
