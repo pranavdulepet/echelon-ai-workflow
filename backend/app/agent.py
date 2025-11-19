@@ -93,6 +93,11 @@ class FormAgent:
                     + "If a previous question asked about a form or field, and the user provided an answer, "
                     + "use that answer in your plan. Only ask a NEW clarification question if information is STILL missing "
                     + "after considering all previous answers.\n\n"
+                    + "INTERPRETING VAGUE ANSWERS:\n"
+                    + "- If you suggested options/values and user said 'that's fine', 'okay', 'yes', or similar, "
+                    + "interpret this as accepting your suggestions and use them in the plan\n"
+                    + "- If user said 'create a new field' or 'add new field', set operation to 'insert' and do NOT look for existing fields\n"
+                    + "- If user provides a partial answer, try to infer the complete intent from context\n\n"
                 )
 
         intent_schema_description = """
@@ -210,6 +215,24 @@ Examples:
      "clarification_question": "Which form would you like to add the description field to? Available forms: Travel Request (travel-complex), Employment Demo (employment-demo), Snack Request (snack-request)"
    }
 
+3b. User: "add new field to contact form with checklist options for availability marking"
+   Response (needs clarification):
+   {
+     "fields": [{
+       "operation": "insert",
+       "target_form": {"form_name": "Contact", "form_code": "contact-simple"},
+       "field_code": "availability",
+       "field_label": "Availability",
+       "field_type": "checkbox",
+       "properties": {}
+     }],
+     "options": [],
+     "logic_blocks": [],
+     "notes": "User wants to create a new field with checklist options, but did not specify the exact option labels",
+     "needs_clarification": true,
+     "clarification_question": "For the Contact (Simple) form, what checklist option labels would you like for the new availability field? Please provide the exact labels, for example: ['Weekdays', 'Weekends', 'Mornings', 'Afternoons', 'Evenings']"
+   }
+
 4. User: "I want to create a new form to allow employees to request a new snack. There should be a category field (ice cream/ beverage/ fruit/ chips/ gum), and name of the item (text)."
    Response:
    {
@@ -266,6 +289,9 @@ Clarification question guidelines:
 - Example: Instead of "Which form?", ask "Which form would you like to add the description field to? Available forms: Travel Request (travel-complex), Employment Demo (employment-demo)"
 - Example: Instead of "Which field?", ask "Which field should be updated? The form has these fields: Destinations (destinations), Start Date (start_date), End Date (end_date)"
 - If previous clarification answers provide the needed information, DO NOT ask again - use that information instead
+- IMPORTANT: When user says "create a new field" or "add new field", the operation MUST be "insert" and you should NOT look for existing fields
+- If user's answer is vague (e.g., "that's fine", "okay", "yes"), ask for specific details or interpret based on context (e.g., if you suggested options and they said "that's fine", use those suggested options)
+- When asking about field options for a NEW field, make it clear the field will be created and ask for the specific option values
 """
 
         system_prompt = (

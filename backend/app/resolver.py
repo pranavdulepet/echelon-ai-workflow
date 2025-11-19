@@ -253,10 +253,14 @@ async def _apply_field_intents(
 ) -> None:
     for intent in intents:
         form_id = await _resolve_form_id(db, intent.target_form.model_dump(), new_form_ids)
-        existing = await _resolve_field(db, form_id, intent, change_set)
         table = _ensure_table_section(change_set, "form_fields")
 
         if intent.operation is OperationType.insert:
+   
+            existing = await _resolve_field(db, form_id, intent, change_set)
+            if existing:
+            
+                continue
             if not intent.field_type:
                 raise ValueError("Field insert requires field_type")
             field_type = await db.get_field_type_by_key(intent.field_type)
@@ -310,6 +314,7 @@ async def _apply_field_intents(
             table["insert"].append(row)
 
         elif intent.operation is OperationType.update:
+            existing = await _resolve_field(db, form_id, intent, change_set)
             if not existing:
                 raise ValueError("Field update could not resolve an existing field")
             update_row = {"id": existing["id"]}
@@ -325,6 +330,7 @@ async def _apply_field_intents(
             table["update"].append(update_row)
 
         elif intent.operation is OperationType.delete:
+            existing = await _resolve_field(db, form_id, intent, change_set)
             if not existing:
                 raise ValueError("Field delete could not resolve an existing field")
             table["delete"].append({"id": existing["id"]})
@@ -335,16 +341,35 @@ async def _apply_option_intents(
 ) -> None:
     for intent in intents:
         form_id = await _resolve_form_id(db, intent.target_form.model_dump(), new_form_ids)
-        field_intent = FieldIntent(
-            operation=OperationType.update,
-            target_form=intent.target_form,
-            field_code=intent.field_code,
-            field_label=intent.field_label,
-            field_type=None,
-            page_hint=None,
-            properties={},
-        )
-        field = await _resolve_field(db, form_id, field_intent, change_set)
+        
+        field = None
+        if change_set:
+            fields_in_changeset = change_set.get("form_fields", {}).get("insert", [])
+            if intent.field_code:
+                field = next(
+                    (f for f in fields_in_changeset
+                     if f.get("form_id") == form_id and f.get("code") == intent.field_code),
+                    None
+                )
+            if not field and intent.field_label:
+                field = next(
+                    (f for f in fields_in_changeset
+                     if f.get("form_id") == form_id and f.get("label") == intent.field_label),
+                    None
+                )
+        
+        if not field:
+            field_intent = FieldIntent(
+                operation=OperationType.update,
+                target_form=intent.target_form,
+                field_code=intent.field_code,
+                field_label=intent.field_label,
+                field_type=None,
+                page_hint=None,
+                properties={},
+            )
+            field = await _resolve_field(db, form_id, field_intent, change_set)
+        
         if not field:
             form_row = await db.fetch_one(
                 "SELECT title, slug FROM forms WHERE id = ?", [form_id]
@@ -359,9 +384,11 @@ async def _apply_option_intents(
                 [form_id],
             )
             wanted = intent.field_code or intent.field_label or "the dropdown field"
+            field_list = ", ".join([f"{row['label']} ({row['code']})" for row in fields]) if fields else "no fields"
             message = (
-                "I could not find a field that looks like "
-                f"'{wanted}' on {form_label}. Please choose the correct field."
+                f"I could not find a field that looks like '{wanted}' on {form_label}. "
+                f"Existing fields: {field_list}. "
+                f"If you want to CREATE a new field, please say 'create a new field' or 'add new field' explicitly."
             )
             field_candidates = [
                 {"id": row["id"], "label": row["label"], "code": row["code"]}
