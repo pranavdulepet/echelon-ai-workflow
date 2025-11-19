@@ -4,6 +4,7 @@ Configuration for backend services.
 
 from pathlib import Path
 from functools import lru_cache
+import os
 
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
@@ -34,7 +35,7 @@ class Settings(BaseSettings):
         return v
 
     class Config:
-        env_file = ".env"
+        env_file = None if os.getenv("DISABLE_DOTENV", "").lower() in {"1", "true", "yes"} else ".env"
         env_file_encoding = "utf-8"
         populate_by_name = True
 

@@ -5,6 +5,7 @@ Resolver that converts an intent plan into a concrete JSON change-set.
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 from uuid import uuid4
 
@@ -35,6 +36,69 @@ def _ensure_table_section(container: dict[str, Any], table: str) -> dict[str, li
     if table not in container:
         container[table] = {"insert": [], "update": [], "delete": []}
     return container[table]
+
+
+def _normalize_field_code(value: str | None) -> str | None:
+    if value is None:
+        return None
+    return value.strip().lower()
+
+
+def _normalize_field_label(value: str | None) -> str | None:
+    if value is None:
+        return None
+    normalized = re.sub(r"\s+", " ", value.strip().lower())
+    if normalized.endswith(" field"):
+        normalized = normalized[:-6].strip()
+    return normalized
+
+
+def _find_fields_in_changeset_for_options(
+    change_set: dict[str, Any],
+    form_id: str,
+    field_code: str | None,
+    field_label: str | None,
+) -> list[dict[str, Any]]:
+    fields_in_changeset = change_set.get("form_fields", {}).get("insert", [])
+    normalized_form_id = str(form_id)
+    candidates = [
+        field for field in fields_in_changeset if str(field.get("form_id")) == normalized_form_id
+    ]
+
+    matches: list[dict[str, Any]] = []
+    code_norm = _normalize_field_code(field_code)
+    if code_norm:
+        if code_norm.startswith("$fld"):
+            matches = [field for field in candidates if field.get("id") == field_code]
+            if matches:
+                return matches
+        matches = [
+            field
+            for field in candidates
+            if _normalize_field_code(field.get("code")) == code_norm
+            or _normalize_field_code(field.get("label")) == code_norm
+        ]
+        if matches:
+            return matches
+
+    label_norm = _normalize_field_label(field_label)
+    if label_norm:
+        matches = [
+            field
+            for field in candidates
+            if _normalize_field_label(field.get("label")) == label_norm
+        ]
+        if matches:
+            return matches
+        substring_matches = [
+            field
+            for field in candidates
+            if label_norm in (_normalize_field_label(field.get("label")) or "")
+        ]
+        if substring_matches:
+            return substring_matches
+
+    return []
 
 
 async def build_change_set(plan: IntentPlan, db: Database) -> dict[str, Any]:
@@ -347,19 +411,33 @@ async def _apply_option_intents(
         form_id = await _resolve_form_id(db, intent.target_form.model_dump(), new_form_ids)
         
         field = None
+        candidate_matches: list[dict[str, Any]] = []
         if change_set:
-            fields_in_changeset = change_set.get("form_fields", {}).get("insert", [])
-            if intent.field_code:
-                field = next(
-                    (f for f in fields_in_changeset
-                     if f.get("form_id") == form_id and f.get("code") == intent.field_code),
-                    None
+            candidate_matches = _find_fields_in_changeset_for_options(
+                change_set,
+                form_id,
+                intent.field_code,
+                intent.field_label,
+            )
+            if len(candidate_matches) == 1:
+                field = candidate_matches[0]
+            elif len(candidate_matches) > 1:
+                field_list = ", ".join(
+                    f"{candidate.get('label')} (code={candidate.get('code')})"
+                    for candidate in candidate_matches
                 )
-            if not field and intent.field_label:
-                field = next(
-                    (f for f in fields_in_changeset
-                     if f.get("form_id") == form_id and f.get("label") == intent.field_label),
-                    None
+                field_candidates = [
+                    {"id": candidate.get("id"), "label": candidate.get("label"), "code": candidate.get("code")}
+                    for candidate in candidate_matches
+                ]
+                message = (
+                    "I found multiple new fields in this request that could match the field you referenced. "
+                    f"Please pick one of these new fields: {field_list}"
+                )
+                raise ResolutionClarificationNeeded(
+                    message=message,
+                    reason="field_ambiguous",
+                    field_candidates=field_candidates,
                 )
         
         if not field:

@@ -17,6 +17,7 @@ from .config import Settings, get_settings
 from .llm_client import LlmClient
 from .db import Database
 from .request_context import set_request_id, get_request_id
+from .prompt_injection import detect_injection_attempt, sanitize_input, wrap_user_input
 from .exceptions import (
     ChangeSetValidationError,
     ChangeSetStructureError,
@@ -51,8 +52,6 @@ def create_app() -> FastAPI:
 
     @app.post("/api/query", response_model=ChangeSetResponse | ClarificationResponse)
     async def handle_query(body: QueryRequest, request: Request):
-        from .prompt_injection import detect_injection_attempt
-        
         request_id = get_request_id()
         settings.llm_provider = body.provider or settings.llm_provider
         
@@ -133,8 +132,6 @@ def create_app() -> FastAPI:
 
     @app.post("/api/explain", response_model=ExplainResponse)
     async def explain(body: ExplainRequest, request: Request):
-        from .prompt_injection import detect_injection_attempt
-        
         request_id = get_request_id()
         settings.llm_provider = body.provider or settings.llm_provider
         
@@ -165,8 +162,6 @@ def create_app() -> FastAPI:
 
     @app.post("/api/explain/stream")
     async def explain_stream(body: ExplainRequest, request: Request):
-        from .prompt_injection import detect_injection_attempt, sanitize_input, wrap_user_input
-        
         request_id = get_request_id()
         settings.llm_provider = body.provider or settings.llm_provider
         

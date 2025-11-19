@@ -4,6 +4,8 @@ Core agent to turn natural language into an intent plan and final change-set.
 
 from typing import Any
 import json
+import logging
+import re
 
 from pydantic import ValidationError
 
@@ -13,6 +15,56 @@ from .schema_cache import get_schema_state
 from .intent_schema import IntentPlan
 from .llm_client import LlmClient
 from .resolver import build_change_set, ResolutionClarificationNeeded
+from .prompt_injection import (
+    detect_injection_attempt,
+    sanitize_input,
+    validate_history_item,
+    wrap_user_input,
+)
+
+logger = logging.getLogger(__name__)
+
+
+def _normalize_question_text(text: str | None) -> str:
+    if not text:
+        return ""
+    return re.sub(r"\s+", " ", text.strip().lower())
+
+
+def _adjust_clarification_question(
+    history: list[dict[str, str]] | None, question: str
+) -> tuple[str, bool]:
+    """
+    Detect repeated clarification loops and adjust messaging to the user.
+    """
+    if not question:
+        return question, False
+
+    normalized_question = _normalize_question_text(question)
+    if not history:
+        return question, False
+
+    repeat_count = 0
+    last_question_match = False
+    for item in reversed(history):
+        previous_question = item.get("question", "")
+        if not previous_question:
+            continue
+        normalized_previous = _normalize_question_text(previous_question)
+        if normalized_previous == normalized_question:
+            repeat_count += 1
+            if repeat_count == 1:
+                last_question_match = True
+
+    if repeat_count == 0 or not last_question_match:
+        return question, False
+
+    adjusted_question = (
+        "I'm still missing the information I asked for previously, please provide that so I can continue.\n\n"
+        f"Previously asked:\n{question}\n\n"
+        "Please answer this question as specifically as possible so I can move forward."
+    )
+    return adjusted_question, True
 
 
 def _schema_summary(tables: list[TableInfo]) -> str:
@@ -71,8 +123,6 @@ class FormAgent:
         return f"{table_summary}\n\n{forms_summary}"
 
     async def plan_from_query(self, query: str, history: list[dict[str, str]] | None = None) -> IntentPlan:
-        from .prompt_injection import detect_injection_attempt, sanitize_input, wrap_user_input, validate_history_item
-        
         is_suspicious, reason = detect_injection_attempt(query)
         if is_suspicious:
             raise ValueError(f"Invalid input detected: {reason}")
@@ -372,8 +422,6 @@ class FormAgent:
         return plan
 
     async def critique_intent_plan(self, query: str, plan: IntentPlan, history: list[dict[str, str]] | None = None) -> IntentPlan:
-        from .prompt_injection import sanitize_input, wrap_user_input
-        
         skeleton = plan.model_copy(deep=True)
         skeleton.notes = None
         skeleton.needs_clarification = False
@@ -435,7 +483,10 @@ class FormAgent:
         raw = self.llm.generate_json(system_prompt=system_prompt, user_prompt=user_prompt)
         try:
             reviewed = IntentPlan.model_validate(raw)
-        except ValidationError:
+        except ValidationError as exc:
+            logger.warning("critique_intent_plan validation failed, using original plan: %s", exc)
+            plan.notes = (plan.notes or "")
+            plan.notes = (plan.notes + "\nCritique validation failed; using original plan.").strip()
             return plan
         return reviewed
 
@@ -462,8 +513,6 @@ class FormAgent:
         from .exceptions import ChangeSetValidationError, ChangeSetStructureError
         from .plan_validator import detect_assumptions, should_ask_clarification
         
-        schema_summary = await self._get_schema_summary()
-        
         plan = await self.plan_from_query(query=query, history=history)
         plan = await self.critique_intent_plan(query=query, plan=plan, history=history)
         
@@ -482,11 +531,19 @@ class FormAgent:
                 plan.clarification_question
                 or "I need a bit more detail to plan these changes. Can you clarify what you want to modify?"
             )
-            return {
+            adjusted_question, loop_detected = _adjust_clarification_question(history, question)
+            plan.clarification_question = adjusted_question
+            if loop_detected:
+                plan.notes = (plan.notes or "")
+                plan.notes = (plan.notes + "\nClarification loop detected; reinforcing question.").strip()
+            response: dict[str, Any] = {
                 "type": "clarification",
-                "question": question,
+                "question": adjusted_question,
                 "plan": plan.model_dump(),
             }
+            if loop_detected:
+                response["reason"] = "clarification_loop"
+            return response
 
         try:
             change_set = await build_change_set(plan=plan, db=self.db)
