@@ -49,6 +49,19 @@ class ExplainResponse(BaseModel):
     explanation: str
 
 
+class ApplyChangeSetRequest(BaseModel):
+    change_set: dict[str, Any] = Field(..., description="Change-set to apply to the database")
+
+
+class ApplyChangeSetResponse(BaseModel):
+    success: bool
+    placeholder_mapping: dict[str, str] = Field(
+        default_factory=dict,
+        description="Mapping of placeholder IDs to actual generated IDs"
+    )
+    message: str = "Change-set applied successfully"
+
+
 class FormSummary(BaseModel):
     id: str
     slug: str

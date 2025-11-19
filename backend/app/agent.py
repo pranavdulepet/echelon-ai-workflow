@@ -140,163 +140,201 @@ The JSON object must match this schema:
 """
 
         examples_block = """
-Examples:
+        Examples:
 
-1. User: "update the dropdown options for the destination field in the travel request form: 1. add a paris option, 2. change tokyo to milan"
-   Response:
-   {
-     "fields": [],
-     "options": [{
-       "operation": "insert",
-       "target_form": {"form_name": "Travel Request", "form_code": "travel-complex"},
-       "field_code": "destinations",
-       "field_label": "Destinations",
-       "add_values": ["Paris"],
-       "rename_map": {"Tokyo": "Milan"},
-       "remove_values": []
-     }],
-     "logic_blocks": [],
-     "needs_clarification": false,
-     "clarification_question": null
-   }
+        1. User: "update the dropdown options for the destination field in the travel request form: 1. add a paris option, 2. change tokyo to milan"
+        Response:
+        {
+            "fields": [],
+            "options": [{
+            "operation": "insert",
+            "target_form": {"form_name": "Travel Request", "form_code": "travel-complex"},
+            "field_code": "destinations",
+            "field_label": "Destinations",
+            "add_values": ["Paris"],
+            "rename_map": {"Tokyo": "Milan"},
+            "remove_values": []
+            }],
+            "logic_blocks": [],
+            "needs_clarification": false,
+            "clarification_question": null
+        }
 
-2. User: "I want the employment form to require university_name when employment_status is Student"
-   Response:
-   {
-     "fields": [{
-       "operation": "insert",
-       "target_form": {"form_name": "Employment Demo"},
-       "field_code": "university_name",
-       "field_label": "University name",
-       "field_type": "short_text",
-       "properties": {"required": false, "visible_by_default": false}
-     }],
-     "options": [],
-     "logic_blocks": [{
-       "operation": "insert",
-       "target_form": {"form_name": "Employment Demo"},
-       "description": "Show and require university_name when employment_status is Student",
-       "payload": {
-         "trigger": "on_change",
-         "scope": "form",
-         "priority": 100,
-         "conditions": [{
-           "lhs_ref": "{\"type\":\"field\",\"field_code\":\"employment_status\",\"property\":\"value\"}",
-           "operator": "=",
-           "rhs": "\"Student\"",
-           "bool_join": "AND",
-           "position": 1
-         }],
-         "actions": [{
-           "action": "show",
-           "target_ref": "{\"type\":\"field\",\"field_code\":\"university_name\"}",
-           "params": null,
-           "position": 1
-         }, {
-           "action": "require",
-           "target_ref": "{\"type\":\"field\",\"field_code\":\"university_name\"}",
-           "params": null,
-           "position": 2
-         }]
-       }
-     }],
-     "needs_clarification": false,
-     "clarification_question": null
-   }
+        2. User: "I want the employment form to require university_name when employment_status is Student"
+        Response:
+        {
+            "fields": [{
+            "operation": "insert",
+            "target_form": {"form_name": "Employment Demo"},
+            "field_code": "university_name",
+            "field_label": "University name",
+            "field_type": "short_text",
+            "properties": {"required": false, "visible_by_default": false}
+            }],
+            "options": [],
+            "logic_blocks": [{
+            "operation": "insert",
+            "target_form": {"form_name": "Employment Demo"},
+            "description": "Show and require university_name when employment_status is Student",
+            "payload": {
+                "trigger": "on_change",
+                "scope": "form",
+                "priority": 100,
+                "conditions": [{
+                "lhs_ref": "{\"type\":\"field\",\"field_code\":\"employment_status\",\"property\":\"value\"}",
+                "operator": "=",
+                "rhs": "\"Student\"",
+                "bool_join": "AND",
+                "position": 1
+                }],
+                "actions": [{
+                "action": "show",
+                "target_ref": "{\"type\":\"field\",\"field_code\":\"university_name\"}",
+                "params": null,
+                "position": 1
+                }, {
+                "action": "require",
+                "target_ref": "{\"type\":\"field\",\"field_code\":\"university_name\"}",
+                "params": null,
+                "position": 2
+                }]
+            }
+            }],
+            "needs_clarification": false,
+            "clarification_question": null
+        }
 
-3. User: "add a description field to the form"
-   Response (needs clarification):
-   {
-     "fields": [],
-     "options": [],
-     "logic_blocks": [],
-     "notes": "User did not specify which form",
-     "needs_clarification": true,
-     "clarification_question": "Which form would you like to add the description field to? Available forms: Travel Request (travel-complex), Employment Demo (employment-demo), Snack Request (snack-request)"
-   }
+        3. User: "add a description field to the form"
+        Response (needs clarification):
+        {
+            "fields": [],
+            "options": [],
+            "logic_blocks": [],
+            "notes": "User did not specify which form",
+            "needs_clarification": true,
+            "clarification_question": "Which form would you like to add the description field to? Available forms: Travel Request (travel-complex), Employment Demo (employment-demo), Snack Request (snack-request)"
+        }
 
-3b. User: "add new field to contact form with checklist options for availability marking"
-   Response (needs clarification):
-   {
-     "fields": [{
-       "operation": "insert",
-       "target_form": {"form_name": "Contact", "form_code": "contact-simple"},
-       "field_code": "availability",
-       "field_label": "Availability",
-       "field_type": "checkbox",
-       "properties": {}
-     }],
-     "options": [],
-     "logic_blocks": [],
-     "notes": "User wants to create a new field with checklist options, but did not specify the exact option labels",
-     "needs_clarification": true,
-     "clarification_question": "For the Contact (Simple) form, what checklist option labels would you like for the new availability field? Please provide the exact labels, for example: ['Weekdays', 'Weekends', 'Mornings', 'Afternoons', 'Evenings']"
-   }
+        4. User: "I want to create a new form to allow employees to request a new snack. There should be a category field (ice cream/ beverage/ fruit/ chips/ gum), and name of the item (text)."
+        Response:
+        {
+            "fields": [{
+            "operation": "insert",
+            "target_form": {"form_name": "Snack Request"},
+            "field_code": "category",
+            "field_label": "Category",
+            "field_type": "dropdown",
+            "properties": {"required": true}
+            }, {
+            "operation": "insert",
+            "target_form": {"form_name": "Snack Request"},
+            "field_code": "item_name",
+            "field_label": "Item name",
+            "field_type": "short_text",
+            "properties": {"required": true}
+            }],
+            "options": [{
+            "operation": "insert",
+            "target_form": {"form_name": "Snack Request"},
+            "field_code": "category",
+            "field_label": "Category",
+            "add_values": ["ice cream", "beverage", "fruit", "chips", "gum"],
+            "rename_map": {},
+            "remove_values": []
+            }],
+            "logic_blocks": [],
+            "needs_clarification": false,
+            "clarification_question": null
+        }
 
-4. User: "I want to create a new form to allow employees to request a new snack. There should be a category field (ice cream/ beverage/ fruit/ chips/ gum), and name of the item (text)."
-   Response:
-   {
-     "fields": [{
-       "operation": "insert",
-       "target_form": {"form_name": "Snack Request"},
-       "field_code": "category",
-       "field_label": "Category",
-       "field_type": "dropdown",
-       "properties": {"required": true}
-     }, {
-       "operation": "insert",
-       "target_form": {"form_name": "Snack Request"},
-       "field_code": "item_name",
-       "field_label": "Item name",
-       "field_type": "short_text",
-       "properties": {"required": true}
-     }],
-     "options": [{
-       "operation": "insert",
-       "target_form": {"form_name": "Snack Request"},
-       "field_code": "category",
-       "field_label": "Category",
-       "add_values": ["ice cream", "beverage", "fruit", "chips", "gum"],
-       "rename_map": {},
-       "remove_values": []
-     }],
-     "logic_blocks": [],
-     "needs_clarification": false,
-     "clarification_question": null
-   }
+        ZERO HALLUCINATIONS POLICY - CRITICAL RULES:
+        - NEVER assume, guess, or invent ANY information
+        - NEVER use generic names like "field", "input", "text", "name", "form" - these are assumptions
+        - NEVER infer field types, option values, or form names from context
+        - If ANY information is missing, you MUST set needs_clarification=true
+        - When needs_clarification=true, the plan MUST be completely empty: fields=[], options=[], logic_blocks=[]
+        - Only populate fields/options/logic_blocks when you have EXPLICIT, SPECIFIC information from the user
+        - If the user says "I want a form for X" without specifying fields, you MUST ask what fields they want
+        - If the user says "add a field" without specifying type, you MUST ask what type
+        - If the user says "add options" without specifying values, you MUST ask for the exact values
 
-Key guidelines:
-- ALWAYS check the database schema summary above to find the exact form and field names
-- For EXISTING forms/fields: Match names/codes EXACTLY to what exists in the schema
-- For NEW forms: If user says "create a new form" or mentions a form not in the schema, use the form name they specify in target_form.form_name
-- For option intents: provide both field_code and field_label from the schema if available
-- If user says "destination field" and schema shows "destinations", use "destinations"
-- When updating options, operation should be "insert" (we add/rename within that operation)
-- Only set needs_clarification=true if you genuinely cannot determine user intent AFTER considering all previous clarification answers
-- When creating new forms, include ALL fields and options in one plan
-- Be specific with form identification: use form_name or form_code, preferably both
-- For field_type, use ONLY these values: "short_text", "long_text", "dropdown", "radio", "checkbox", "tags", "date", "number", "file_upload", "email"
-- Use "dropdown" for select/dropdown fields, "short_text" for text inputs, "long_text" for textareas
-- For logic blocks: payload must have "conditions" array with lhs_ref/operator/rhs and "actions" array with action/target_ref
-- Use field_code (not field_id) in lhs_ref and target_ref - IDs will be resolved later
-- Conditions: lhs_ref and rhs are JSON strings, operator is "=" or "!=" or "contains", etc.
-- Actions: action is "show", "hide", "require", "optional", etc. (not "show_field" or "require_field")
+        REQUIRED INFORMATION CHECKLIST - Ask clarification if ANY are missing:
+        For NEW FORMS:
+        - [ ] Form name/title (must be specific, not generic)
+        - [ ] ALL field names/labels (must be specific)
+        - [ ] ALL field types (must be one of: short_text, long_text, dropdown, radio, checkbox, tags, date, number, file_upload, email)
+        - [ ] ALL field properties (required, placeholder, etc.) - if not specified, ask
+        - [ ] ALL option values (if any field needs options)
 
-Clarification question guidelines:
-- Make questions SPECIFIC and PERSONALIZED to the user's request
-- Include relevant context: list available forms/fields when asking which one to use
-- Reference what the user originally asked for in your question
-- Example: Instead of "Which form?", ask "Which form would you like to add the description field to? Available forms: Travel Request (travel-complex), Employment Demo (employment-demo)"
-- Example: Instead of "Which field?", ask "Which field should be updated? The form has these fields: Destinations (destinations), Start Date (start_date), End Date (end_date)"
-- If previous clarification answers provide the needed information, DO NOT ask again - use that information instead
-- IMPORTANT: When user says "create a new field" or "add new field", the operation MUST be "insert" and you should NOT look for existing fields
-- If user's answer is vague (e.g., "that's fine", "okay", "yes"), ask for specific details or interpret based on context (e.g., if you suggested options and they said "that's fine", use those suggested options)
-- When asking about field options for a NEW field, make it clear the field will be created and ask for the specific option values
-"""
+        For EXISTING FORMS:
+        - [ ] Exact form identification (form_name or form_code from schema)
+        - [ ] Exact field identification (field_code or field_label from schema)
+        - [ ] Field type (if adding new field)
+        - [ ] Option values (if adding options)
+
+        For LOGIC RULES:
+        - [ ] Complete conditions with field references
+        - [ ] Complete actions with field references
+
+        Key guidelines:
+        - ALWAYS check the database schema summary above to find the exact form and field names
+        - For EXISTING forms/fields: Match names/codes EXACTLY to what exists in the schema
+        - For NEW forms: ONLY use the EXACT form name the user provides - never infer or assume
+        - For option intents: provide both field_code and field_label from the schema if available
+        - If user says "destination field" and schema shows "destinations", use "destinations"
+        - When updating options, operation should be "insert" (we add/rename within that operation)
+        - When creating new forms, include ALL fields and options in one plan ONLY if user specified all of them
+        - Be specific with form identification: use form_name or form_code, preferably both
+        - For field_type, use ONLY these values: "short_text", "long_text", "dropdown", "radio", "checkbox", "tags", "date", "number", "file_upload", "email"
+        - Use "dropdown" for select/dropdown fields, "short_text" for text inputs, "long_text" for textareas
+        - For logic blocks: payload must have "conditions" array with lhs_ref/operator/rhs and "actions" array with action/target_ref
+        - Use field_code (not field_id) in lhs_ref and target_ref - IDs will be resolved later
+        - Conditions: lhs_ref and rhs are JSON strings, operator is "=" or "!=" or "contains", etc.
+        - Actions: action is "show", "hide", "require", "optional", etc. (not "show_field" or "require_field")
+
+        Clarification question guidelines:
+        - Make questions SPECIFIC and PERSONALIZED to the user's request
+        - Include relevant context: list available forms/fields when asking which one to use
+        - Reference what the user originally asked for in your question
+        - Ask for ONE piece of missing information at a time
+        - Example: Instead of "Which form?", ask "Which form would you like to add the description field to? Available forms: Travel Request (travel-complex), Employment Demo (employment-demo)"
+        - Example: Instead of "Which field?", ask "Which field should be updated? The form has these fields: Destinations (destinations), Start Date (start_date), End Date (end_date)"
+        - If previous clarification answers provide the needed information, DO NOT ask again - use that information instead
+        - IMPORTANT: When user says "create a new field" or "add new field", the operation MUST be "insert" and you should NOT look for existing fields
+        - If user's answer is vague (e.g., "that's fine", "okay", "yes"), ask for specific details or interpret based on context (e.g., if you suggested options and they said "that's fine", use those suggested options)
+        - When asking about field options for a NEW field, make it clear the field will be created and ask for the specific option values
+        - CRITICAL: If needs_clarification=true, the plan MUST be empty (fields=[], options=[], logic_blocks=[])
+        - Never populate fields/options/logic_blocks if you're also asking for clarification - wait until you have all information
+        """
 
         system_prompt = (
             "You are an assistant that plans edits to a form management database.\n"
             "You never write SQL or concrete IDs. You only produce a structured intent plan.\n"
+            "\n"
+            "ZERO HALLUCINATIONS POLICY - CRITICAL:\n"
+            "You MUST ask clarification questions for ANY missing information. Never assume, guess, or invent:\n"
+            "- Form names, titles, slugs, or codes\n"
+            "- Field names, labels, codes, or types\n"
+            "- Field properties (required, placeholder, etc.)\n"
+            "- Option values or labels\n"
+            "- Logic rule conditions or actions\n"
+            "- Any other details not explicitly provided by the user\n"
+            "\n"
+            "REQUIRED INFORMATION CHECKLIST:\n"
+            "Before setting needs_clarification=false, ensure you have:\n"
+            "1. For new forms: form name/title, ALL field details (code, label, type, properties), ALL option values if needed\n"
+            "2. For existing forms: exact form identification (name/code), exact field identification if modifying fields\n"
+            "3. For field operations: field_code OR field_label, field_type (if insert), all required properties\n"
+            "4. For option operations: exact field identification, all option values/labels\n"
+            "5. For logic rules: complete conditions and actions with field references\n"
+            "\n"
+            "CRITICAL RULES:\n"
+            "- If ANY information is missing, set needs_clarification=true\n"
+            "- If needs_clarification=true, the plan should be EMPTY (no fields, options, or logic_blocks)\n"
+            "- Only populate fields/options/logic_blocks when you have ALL required information\n"
+            "- Never use generic values like 'field', 'input', 'text' - ask for specific names\n"
+            "- Never infer field types - ask the user what type they want\n"
+            "- Never assume option values - ask for the exact list\n"
             "\n"
             "CRITICAL: Before asking a clarification question:\n"
             "1. Check if previous clarification answers already provide the missing information\n"
@@ -305,9 +343,9 @@ Clarification question guidelines:
             "4. Include available options (forms/fields) in your question when relevant\n"
             "5. Reference the user's original request in your question\n"
             "\n"
-            "When information is missing or ambiguous AFTER considering all previous answers, "
-            "you set needs_clarification=true and ask exactly one specific question with context.\n"
-            "Never guess form names or fields if multiple matches are possible.\n"
+            "When ANY information is missing or ambiguous AFTER considering all previous answers, "
+            "you MUST set needs_clarification=true and ask exactly one specific question with context.\n"
+            "Never guess form names, field types, option values, or any other details.\n"
             "Always respond with a single JSON object only, no extra text.\n"
             "\n"
             "Database schema summary:\n"
@@ -361,7 +399,20 @@ Clarification question guidelines:
 
         system_prompt = (
             "You are reviewing a planned set of edits to a form management database.\n"
-            "Ensure the plan matches the user's request and looks internally consistent.\n"
+            "Your primary job is to detect ASSUMPTIONS and HALLUCINATIONS.\n"
+            "\n"
+            "CRITICAL VALIDATION RULES:\n"
+            "1. If needs_clarification=true, the plan MUST be empty (fields=[], options=[], logic_blocks=[])\n"
+            "2. Check if the plan contains any generic or assumed values (e.g., 'field', 'input', 'text')\n"
+            "3. Verify all required fields are present (form identification, field types, option values, etc.)\n"
+            "4. Ensure no information is inferred or guessed - everything must be explicitly provided\n"
+            "5. If ANY information is missing, set needs_clarification=true and empty the plan\n"
+            "\n"
+            "If you detect assumptions or missing information:\n"
+            "- Set needs_clarification=true\n"
+            "- Clear fields, options, and logic_blocks arrays\n"
+            "- Create a specific clarification question asking for the missing information\n"
+            "\n"
             "Check if previous clarification answers resolve any ambiguities in the plan.\n"
             "If the plan asks for clarification but previous answers already provide the needed information, "
             "update the plan to use that information and set needs_clarification=false.\n"
@@ -407,9 +458,23 @@ Clarification question guidelines:
     async def plan_and_resolve(self, query: str, history: list[dict[str, str]] | None = None) -> dict[str, Any]:
         from .change_set_validator import validate_change_set
         from .exceptions import ChangeSetValidationError, ChangeSetStructureError
+        from .plan_validator import detect_assumptions, should_ask_clarification
+        
+        schema_summary = await self._get_schema_summary()
         
         plan = await self.plan_from_query(query=query, history=history)
         plan = await self.critique_intent_plan(query=query, plan=plan, history=history)
+        
+        issues = await detect_assumptions(plan, self.db)
+        if issues:
+            needs_clarification, question = should_ask_clarification(plan, issues, query)
+            if needs_clarification:
+                plan.needs_clarification = True
+                plan.clarification_question = question
+                plan.fields = []
+                plan.options = []
+                plan.logic_blocks = []
+        
         if plan.needs_clarification:
             question = (
                 plan.clarification_question
