@@ -32,7 +32,7 @@ cd backend
 pip install -r requirements.txt
 ```
 
-3. Configure environment variables in a `.env` file in the project root or export them:
+3. Configure environment variables in a `.env` file in the project root or export them (set `DISABLE_DOTENV=1` to skip loading `.env`, which is helpful in sandboxed CI or when file permissions are locked down):
 
 ```bash
 OPENAI_API_KEY=sk-...
@@ -51,7 +51,7 @@ cd echelon-ai-workflow
 uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-The API exposes:
+The API exposes (each response includes an `X-Request-ID` header so you can trace logs end-to-end):
 
 - `POST /api/query` for running the agent
 - `GET /health` for a basic health check
@@ -80,16 +80,17 @@ The frontend calls the backend at `/api/query` via a development proxy defined i
 ### High-level flow
 
 1. User enters a natural-language request in the React UI.
-2. Frontend sends the request to `POST /api/query` with a selected provider (OpenAI or Claude) and any prior clarification history.
+2. Frontend sends the request to `POST /api/query` with a selected provider (OpenAI or Claude) and any prior clarification history. Before the text reaches any LLM, the backend runs prompt-injection detection, input sanitization, and clarification-history validation.
 3. Backend agent:
    - pre-processes and normalizes the text
-   - builds a compact prompt including a cached database schema summary and an explicit JSON schema for the intent plan
+   - builds a compact prompt including a cached database schema summary, a comprehensive forms/fields inventory, and an explicit JSON schema for the intent plan
+   - enforces a “ZERO HALLUCINATIONS” checklist so missing information automatically triggers clarifications instead of guesses
    - calls the chosen LLM in JSON mode to get an initial `IntentPlan`
-   - runs a second, critique pass over the plan to check for obvious mismatches
-   - validates/repairs the plan using Pydantic
+   - runs a second, critique pass over the plan to check for obvious mismatches (if the critique result fails validation, the original plan is reused and the warning is logged)
+   - validates/repairs the plan using Pydantic and a custom `plan_validator` that detects assumptions (e.g., generic field names, missing field types) and generates personalized clarification questions referencing prior answers
    - resolves forms, fields, option sets, and logic rules against SQLite
    - produces a JSON change-set keyed by table name with `insert`/`update`/`delete` arrays and a `before_snapshot` of affected forms
-4. The change-set or a clarifying question is returned to the frontend and rendered as formatted JSON and an enhanced visual preview showing before/after states with detailed change highlighting.
+4. The change-set or a clarifying question is returned to the frontend and rendered as formatted JSON (with edit/save controls that validate user tweaks before applying them) plus an enhanced visual preview showing before/after states with detailed change highlighting.
 
 ### Intermediate intent representation
 
@@ -163,6 +164,20 @@ In addition, the agent returns a `before_snapshot` structure for any affected fo
 - A configurable limit `MAX_CHANGED_ROWS` caps the number of rows that can be modified by a single request.
 - Ambiguous matches for forms or fields surface as clarifying questions (e.g., listing multiple matching forms/fields) rather than silent failures.
 - Intent validation ensures every `update` and `delete` references real rows where resolvable.
+- `plan_validator` enforces the required-information checklist and generates specific clarification questions (including available forms/fields) when details are missing.
+- `change_set_validator` runs after resolution to ensure placeholder references, required columns, and foreign keys are all valid before returning a response.
+- Clarification questions are deduplicated to avoid loops; if the same wording repeats, the agent escalates with stronger messaging and flags the response with `reason=clarification_loop`.
+- Option intents can reference fields inserted earlier in the same request because the resolver now matches against placeholder IDs, normalized codes, and labels (with ambiguity detection).
+
+## Safety, security, and observability
+
+- **Prompt injection defense**: `prompt_injection.py` detects malicious patterns (e.g., “ignore previous instructions”), strips control characters, wraps user text in sentinel markers, and validates clarification history structure before any LLM call.
+- **Zero-hallucination policy**: System prompts contain a required-information checklist; missing details force `needs_clarification=true` with empty plan arrays, and the validator double-checks this.
+- **Two-stage reasoning with safe fallback**: The critique model can only reduce risk; invalid critique JSON is logged and the previous plan is reused.
+- **Structured error handling**: Custom exceptions (`ResolutionClarificationNeeded`, `ChangeSetStructureError`, `LLMOperationError`, etc.) are surfaced to FastAPI, which maps them to precise HTTP codes (400, 422, 502, 503) and user-friendly messages.
+- **Request tracing**: Every HTTP request gets a UUID via `request_context`; the middleware adds `X-Request-ID` so logs, frontend, and API clients can align traces.
+- **Change-set validation**: Beyond schema checks, the validator enforces row count ceilings (`MAX_CHANGED_ROWS`) and ensures placeholder IDs referenced by logic rules/options resolve correctly.
+- **Frontend safeguards**: The JSON editor validates edits before applying and shows inline errors; the visual preview always reflects the parsed structure, not raw text, preventing malformed JSON from propagating.
 
 ## Testing and evaluation
 
@@ -175,6 +190,7 @@ There is a scenario example set and a small test suite under `backend/tests`:
 - `backend/tests/run_scenarios.py` runs the agent against these queries and prints the resulting change-sets.
 - `backend/tests/test_resolver_examples.py` checks deterministic resolver behavior against the three standard examples (options update, snack form, employment logic).
 - `backend/tests/test_invariants.py` runs end-to-end queries through the full agent and asserts invariants on the resulting change-sets (shape, required fields present, update/delete IDs exist), using the cached schema.
+- `backend/tests/TESTING_GUIDE.md` documents the full testing strategy, coverage map, and how to extend each layer (scenarios, invariants, resolver unit tests).
 
 Run the tests with:
 
@@ -242,6 +258,7 @@ In a production setting, you could extend this to compute exact- and partial-mat
     - Detailed property change tracking (shows what changed and how)
     - Logic rule visualization with readable condition/action descriptions
     - Option change visualization with pills showing additions, renames, and removals
+  - The JSON change-set viewer supports inline edit/save with validation, so advanced users can tweak the payload, re-parse it safely, and immediately see the visual preview update.
   - This avoids coupling correctness to free-form text while still giving users easily followable summaries and clear visual feedback.
 
 ## Assumptions and constraints
